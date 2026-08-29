@@ -9,7 +9,7 @@ option(
 if(CARDPUTER_LED_DIAGNOSTIC)
     set(PROJECT_VER "0.9.7-led-diagnostic")
 else()
-    set(PROJECT_VER "0.10.0")
+    set(PROJECT_VER "0.10.1")
 endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 if(CARDPUTER_LED_DIAGNOSTIC)

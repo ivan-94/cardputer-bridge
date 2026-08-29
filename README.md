@@ -77,13 +77,15 @@ App 提供六步首次设置，以及概览、快捷键、麦克风、设备与�
 
 ### 当前发布状态
 
-`v0.10.0` 是首个公开预览版本。对应 tag 的发布工作流会同时生成 Apple silicon macOS App、Core Audio 麦克风驱动、安装说明和 Cardputer-ADV 签名固件；资产发布完成后可从 [v0.10.0 Release](https://github.com/ivan-94/cardputer-bridge/releases/tag/v0.10.0) 下载。macOS 产物使用 **ad-hoc 签名**，尚未经过 Apple 公证，因此首次打开需要由用户明确允许。固件镜像使用 ESP-IDF Secure Boot v2 格式的 RSA-3072 签名，OTA 发布清单另有 Ed25519 签名；当前没有熔断硬件 Secure Boot eFuse。
+`v0.10.1` 是当前公开预览版本。对应 tag 的发布工作流会同时生成 Apple silicon macOS App、Core Audio 麦克风驱动、图形化 DMG 安装盘、安装说明和 Cardputer-ADV 签名固件；资产发布完成后可从 [最新 Release](https://github.com/ivan-94/cardputer-bridge/releases/latest) 下载。macOS 产物使用 **ad-hoc 签名**，尚未经过 Apple 公证，因此首次打开需要由用户明确允许。固件镜像使用 ESP-IDF Secure Boot v2 格式的 RSA-3072 签名，OTA 发布清单另有 Ed25519 签名；当前没有熔断硬件 Secure Boot eFuse。
 
-1. 从 Release 下载 `Cardputer-Bridge-v0.10.0-macOS-arm64.zip` 和同名 `.sha256` 文件。
-2. 在下载目录运行 `shasum -a 256 -c Cardputer-Bridge-v0.10.0-macOS-arm64.sha256`。
-3. 解压后将 App 拖入“应用程序”，按住 Control 点击并选择“打开”；如仍被拦截，到“系统设置 → 隐私与安全性”选择“仍要打开”。
-4. 按包内 `INSTALL.md` 运行音频驱动安装器，然后通过 USB 连接 Cardputer-ADV，由 App 完成首次固件安装。
+1. 从 Release 下载 `Cardputer-Bridge-v0.10.1-macOS-arm64.dmg` 和同名 `.dmg.sha256` 文件。
+2. 在下载目录运行 `shasum -a 256 -c Cardputer-Bridge-v0.10.1-macOS-arm64.dmg.sha256`。
+3. 打开 DMG，将 App 拖到 `Applications`；若 macOS 显示“Apple 无法验证”并提供“移动到废纸篓”，点击“完成”，然后到“系统设置 → 隐私与安全性”选择“仍要打开”。DMG 内的“安装说明”提供了逐步图文风格指引。
+4. 在 App 首次设置中点击“安装系统麦克风”，完成一次管理员认证；然后通过 USB 连接 Cardputer-ADV，由 App 完成首次固件安装。
 5. 按向导完成 BLE 安全配对和 2.4 GHz Wi-Fi 配置。此后 App 可检查 GitHub 签名更新，不必反复覆盖整片 Flash。
+
+如所在环境无法挂载 DMG，可下载 ZIP 与对应校验文件作为备用包。
 
 > [!WARNING]
 > ad-hoc 签名只能证明下载后的包在校验后没有被本机再次修改，不提供 Apple 开发者身份或公证背书。请只从本仓库 Release 下载，并先验证 SHA-256。

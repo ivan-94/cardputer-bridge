@@ -17,7 +17,7 @@ done
   printf 'Usage: %s --version X.Y.Z [--output DIR]\n' "$0" >&2
   exit 2
 }
-for tool in xcodegen xcodebuild xcrun codesign ditto plutil file shasum sed; do
+for tool in xcodegen xcodebuild xcrun codesign create-dmg ditto hdiutil plutil file shasum sed; do
   command -v "$tool" >/dev/null || { printf 'Missing tool: %s\n' "$tool" >&2; exit 1; }
 done
 
@@ -45,6 +45,8 @@ derived_data="$build_root/release-xcode"
 payload="$build_root/Cardputer-Bridge-v${version}-macOS-arm64"
 archive="$output_dir/Cardputer-Bridge-v${version}-macOS-arm64.zip"
 checksum="$output_dir/Cardputer-Bridge-v${version}-macOS-arm64.sha256"
+dmg="$output_dir/Cardputer-Bridge-v${version}-macOS-arm64.dmg"
+dmg_checksum="$output_dir/Cardputer-Bridge-v${version}-macOS-arm64.dmg.sha256"
 
 case "$build_root" in
   "$output_dir"/build-macos|"$output_dir"/build-macos/*) ;;
@@ -71,8 +73,6 @@ mkdir -p "$derived_data"
 app="$derived_data/Build/Products/Release/Cardputer Bridge.app"
 executable="$app/Contents/MacOS/Cardputer Bridge"
 [[ -d "$app" ]] || { printf 'App bundle missing: %s\n' "$app" >&2; exit 1; }
-codesign --force --deep --sign - "$app"
-codesign --verify --deep --strict "$app"
 [[ "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" == "$version" ]]
 file "$executable" | grep -q 'Mach-O 64-bit executable arm64'
 
@@ -80,6 +80,20 @@ CARDPUTER_BRIDGE_BUILD_ROOT="$build_root" DEVELOPER_DIR="$developer_dir" "$proje
 driver="$build_root/audio-plugin/CardputerBridgeAudio.driver"
 [[ -d "$driver" ]] || { printf 'Audio driver missing: %s\n' "$driver" >&2; exit 1; }
 codesign --verify --deep --strict "$driver"
+
+audio_installer_resources="$app/Contents/Resources/AudioInstaller"
+mkdir -p "$audio_installer_resources/Audio"
+ditto "$driver" "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"
+cp \
+  "$project_dir/packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh" \
+  "$audio_installer_resources/install-bundled-audio-driver.sh"
+cp "$project_dir/scripts/check-audio-hal-runtime.sh" "$audio_installer_resources/check-audio-hal-runtime.sh"
+chmod +x \
+  "$audio_installer_resources/install-bundled-audio-driver.sh" \
+  "$audio_installer_resources/check-audio-hal-runtime.sh"
+codesign --force --deep --sign - "$app"
+codesign --verify --deep --strict "$app"
+codesign --verify --deep --strict "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"
 
 mkdir -p "$payload/Audio"
 ditto "$app" "$payload/Cardputer Bridge.app"
@@ -97,7 +111,7 @@ chmod +x \
 codesign --verify --deep --strict "$payload/Cardputer Bridge.app"
 codesign --verify --deep --strict "$payload/Audio/CardputerBridgeAudio.driver"
 
-rm -f "$archive" "$checksum"
+rm -f "$archive" "$checksum" "$dmg" "$dmg_checksum"
 ditto -c -k --sequesterRsrc --keepParent "$payload" "$archive"
 (
   cd "$output_dir"
@@ -119,4 +133,68 @@ codesign --verify --deep --strict "$verified_payload/Audio/CardputerBridgeAudio.
 [[ -f "$verified_payload/INSTALL.md" ]]
 trap - EXIT
 cleanup_verify
-printf 'MACOS_RELEASE_PASS archive=%s checksum=%s\n' "$archive" "$checksum"
+
+dmg_source="$build_root/dmg-source"
+mkdir -p "$dmg_source"
+ditto "$app" "$dmg_source/Cardputer Bridge.app"
+sed "s/@VERSION@/$version/g" \
+  "$project_dir/packaging/macos/dmg/安装说明.html" \
+  > "$dmg_source/安装说明.html"
+volicon="$app/Contents/Resources/AppIcon.icns"
+[[ -f "$volicon" ]] || { printf 'App volume icon missing: %s\n' "$volicon" >&2; exit 1; }
+
+create-dmg \
+  --volname "Cardputer Bridge $version" \
+  --volicon "$volicon" \
+  --background "$project_dir/packaging/macos/dmg/dmg-background.png" \
+  --window-pos 200 120 \
+  --window-size 720 460 \
+  --icon-size 112 \
+  --text-size 13 \
+  --icon "Cardputer Bridge.app" 170 225 \
+  --hide-extension "Cardputer Bridge.app" \
+  --app-drop-link 550 225 \
+  --icon "安装说明.html" 360 105 \
+  --hide-extension "安装说明.html" \
+  --no-internet-enable \
+  "$dmg" \
+  "$dmg_source"
+
+hdiutil verify "$dmg"
+mount_root="$(mktemp -d)"
+mountpoint="$mount_root/Cardputer Bridge"
+mkdir -p "$mountpoint"
+dmg_attached=0
+cleanup_dmg_verify() {
+  cleanup_status=$?
+  if [[ $dmg_attached -eq 1 ]]; then
+    hdiutil detach "$mountpoint" -force >/dev/null || true
+  fi
+  rm -rf "$mount_root"
+  exit "$cleanup_status"
+}
+trap cleanup_dmg_verify EXIT
+hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mountpoint" >/dev/null
+dmg_attached=1
+mounted_app="$mountpoint/Cardputer Bridge.app"
+[[ -d "$mounted_app" ]]
+[[ -L "$mountpoint/Applications" ]]
+[[ "$(readlink "$mountpoint/Applications")" == "/Applications" ]]
+[[ -f "$mountpoint/安装说明.html" ]]
+[[ -x "$mounted_app/Contents/Resources/AudioInstaller/install-bundled-audio-driver.sh" ]]
+[[ -x "$mounted_app/Contents/Resources/AudioInstaller/check-audio-hal-runtime.sh" ]]
+codesign --verify --deep --strict "$mounted_app"
+codesign --verify --deep --strict \
+  "$mounted_app/Contents/Resources/AudioInstaller/Audio/CardputerBridgeAudio.driver"
+hdiutil detach "$mountpoint" >/dev/null
+dmg_attached=0
+trap - EXIT
+rm -rf "$mount_root"
+
+(
+  cd "$output_dir"
+  shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg_checksum")"
+  shasum -a 256 -c "$(basename "$dmg_checksum")"
+)
+printf 'MACOS_RELEASE_PASS archive=%s checksum=%s dmg=%s dmg_checksum=%s\n' \
+  "$archive" "$checksum" "$dmg" "$dmg_checksum"

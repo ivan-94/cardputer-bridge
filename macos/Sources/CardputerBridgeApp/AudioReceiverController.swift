@@ -51,6 +51,17 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func refreshSystemMicrophone() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let ready = self.systemMicrophone.open()
+            self.publish(
+                fault: ready ? nil : "virtual_microphone_pipeline_unavailable",
+                systemMicrophoneReady: ready
+            )
+        }
+    }
+
     private func startOnQueue() {
         stopOnQueue()
         let newSessionID = UInt64.random(in: 1...UInt64.max)

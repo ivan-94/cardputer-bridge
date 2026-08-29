@@ -220,6 +220,7 @@ private struct BridgeRootView: View {
     @State private var selectedSection: DailySection = .overview
     @State private var diagnosticsExportMessage: String?
     @StateObject private var firmwareUpdate = FirmwareUpdateController()
+    @StateObject private var audioDriverInstaller = AudioDriverInstallerController()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -234,6 +235,7 @@ private struct BridgeRootView: View {
         .groupBoxStyle(BridgeGroupBoxStyle())
         .task {
             bluetooth.start()
+            audioDriverInstaller.refresh()
             audio.onAuthenticatedTestFrame = { [weak bluetooth] sessionID in
                 Task { @MainActor in
                     bluetooth?.confirmAudioReady(sessionID: sessionID)
@@ -1015,7 +1017,15 @@ private struct BridgeRootView: View {
                 .bridgePanel()
             }
         case 4:
-            systemMicrophoneStatusCard(identifier: "onboarding-system-microphone-status")
+            VStack(spacing: 12) {
+                systemMicrophoneStatusCard(identifier: "onboarding-system-microphone-status")
+                if case .failed(let message) = audioDriverInstaller.phase {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(BridgeTheme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         case 5:
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
                 onboardingResult("BLE 键盘", keyboardStatus, status: bluetooth.hidConnected)
@@ -1042,11 +1052,22 @@ private struct BridgeRootView: View {
             .buttonStyle(BridgePrimaryButtonStyle())
             .disabled(wifiSSID.isEmpty || wifiPassword.count < 8 || audio.offer == nil)
         } else if setupStep == 4 {
-            Button(systemMicrophonePipelineReady ? "继续" : "等待系统麦克风") {
-                setupStep = 5
-            }
+            if systemMicrophonePipelineReady {
+                Button("继续") { setupStep = 5 }
+                    .buttonStyle(BridgePrimaryButtonStyle())
+            } else {
+                Button(audioDriverInstaller.phase == .installing ? "正在安装…" : "安装系统麦克风") {
+                    Task {
+                        guard await audioDriverInstaller.install() else { return }
+                        for _ in 0..<8 where !audio.systemMicrophoneReady {
+                            try? await Task.sleep(for: .milliseconds(750))
+                            audio.refreshSystemMicrophone()
+                        }
+                    }
+                }
                 .buttonStyle(BridgePrimaryButtonStyle())
-                .disabled(!systemMicrophonePipelineReady)
+                .disabled(audioDriverInstaller.phase == .installing)
+            }
         } else if setupStep == 5 {
             Button("进入 Cardputer Bridge") { setupCompleted = true }
                 .buttonStyle(BridgePrimaryButtonStyle())
@@ -1085,7 +1106,7 @@ private struct BridgeRootView: View {
         case 1: "保持 Cardputer 开机；App 会发现或恢复此前绑定的设备。"
         case 2: "控制服务只接受已加密、已认证的连接。已有 bond 会直接恢复，不会重复显示配对码。"
         case 3: "Wi-Fi 承载实时音频；BLE 继续负责配网、静音与心跳控制。"
-        case 4: "App 会确认本机音频桥接已经发布 Cardputer Microphone，再进入最后一步。"
+        case 4: "点击一次安装随 App 附带的系统麦克风驱动；macOS 会显示标准管理员授权框。安装完成后，App 会确认 Cardputer Microphone 已发布。"
         default: "你现在可以使用 BLE 键盘、同步 G0 快捷键，并在系统 App 中选择 Cardputer Microphone。"
         }
     }

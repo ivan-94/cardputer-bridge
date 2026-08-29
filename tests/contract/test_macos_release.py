@@ -93,11 +93,57 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("./scripts/build-macos-release.sh", workflow)
         self.assertIn("Cardputer-Bridge-v*-macOS-arm64.zip", workflow)
         self.assertIn("Cardputer-Bridge-v*-macOS-arm64.sha256", workflow)
+        self.assertIn("Cardputer-Bridge-v*-macOS-arm64.dmg", workflow)
+        self.assertIn("Cardputer-Bridge-v*-macOS-arm64.dmg.sha256", workflow)
         self.assertIn("ad-hoc", workflow)
         self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem", workflow)
         self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            cardputer_bridge_firmware.bin", workflow)
         self.assertNotIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            build/cardputer_bridge_firmware.bin", workflow)
         self.assertNotIn(".release/*", workflow)
+
+    def test_release_builder_creates_verified_drag_install_dmg(self) -> None:
+        script = (PROJECT / "scripts/build-macos-release.sh").read_text()
+        background = PROJECT / "packaging/macos/dmg/dmg-background.png"
+
+        self.assertTrue(background.is_file())
+        for required in (
+            "create-dmg",
+            "--app-drop-link",
+            "--background",
+            "安装说明.html",
+            "hdiutil verify",
+            "hdiutil attach",
+            "Cardputer-Bridge-v${version}-macOS-arm64.dmg",
+            "Cardputer-Bridge-v${version}-macOS-arm64.dmg.sha256",
+        ):
+            self.assertIn(required, script)
+
+    def test_release_app_embeds_audio_driver_installer(self) -> None:
+        script = (PROJECT / "scripts/build-macos-release.sh").read_text()
+        controller = (
+            PROJECT / "macos/Sources/CardputerBridgeApp/AudioDriverInstallerController.swift"
+        )
+
+        self.assertTrue(controller.is_file())
+        self.assertIn("AudioInstaller", script)
+        self.assertIn("CardputerBridgeAudio.driver", script)
+        self.assertIn("install-bundled-audio-driver.sh", script)
+        self.assertIn("with administrator privileges", controller.read_text())
+
+    def test_install_guide_covers_ad_hoc_gatekeeper_recovery(self) -> None:
+        guide = (PROJECT / "packaging/macos/INSTALL.md").read_text()
+        html = PROJECT / "packaging/macos/dmg/安装说明.html"
+
+        self.assertTrue(html.is_file())
+        for required in (
+            "Apple 无法验证",
+            "移动到废纸篓",
+            "隐私与安全性",
+            "仍要打开",
+            "安装系统麦克风",
+        ):
+            self.assertIn(required, guide)
+            self.assertIn(required, html.read_text())
 
 
 if __name__ == "__main__":

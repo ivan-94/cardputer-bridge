@@ -72,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install build tools
-        run: brew install xcodegen
+        run: brew install xcodegen create-dmg
       - name: Verify macOS app and audio contracts
         run: ./scripts/verify-macos.sh
       - name: Build verified ad-hoc macOS package
@@ -89,6 +89,8 @@ jobs:
           path: |
             .release/Cardputer-Bridge-v*-macOS-arm64.zip
             .release/Cardputer-Bridge-v*-macOS-arm64.sha256
+            .release/Cardputer-Bridge-v*-macOS-arm64.dmg
+            .release/Cardputer-Bridge-v*-macOS-arm64.dmg.sha256
 
   publish:
     needs: [firmware, macos]
@@ -128,6 +130,8 @@ jobs:
             .release/bootloader.bin
             ".release/Cardputer-Bridge-v${version}-macOS-arm64.zip"
             ".release/Cardputer-Bridge-v${version}-macOS-arm64.sha256"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.dmg"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.dmg.sha256"
           )
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
@@ -145,6 +149,8 @@ jobs:
             .release/bootloader.bin
             ".release/Cardputer-Bridge-v${version}-macOS-arm64.zip"
             ".release/Cardputer-Bridge-v${version}-macOS-arm64.sha256"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.dmg"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.dmg.sha256"
           )
           for asset in "${assets[@]}"; do
             test "$(stat -c %s "$asset")" -gt 0

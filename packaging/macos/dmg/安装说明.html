@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安装 Cardputer Bridge</title>
+  <style>
+    :root { color-scheme: dark; --bg:#08090b; --panel:#121318; --line:#2a2b31; --text:#f7f7f8; --muted:#a6a6ad; --red:#ff5b61; --green:#59dca5; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; font:15px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif; color:var(--text); background:radial-gradient(circle at 75% 8%,#421b20 0,transparent 28%),linear-gradient(145deg,#0e0f13,var(--bg) 60%); }
+    main { width:min(920px,calc(100% - 40px)); margin:44px auto 80px; }
+    header { padding:32px; border:1px solid var(--line); border-radius:24px; background:linear-gradient(135deg,rgba(255,91,97,.12),rgba(18,19,24,.94) 42%); box-shadow:0 24px 80px #0008; }
+    .eyebrow { color:var(--red); font-size:12px; font-weight:750; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:8px 0 6px; font-size:38px; line-height:1.2; letter-spacing:-.04em; }
+    header p { margin:0; color:var(--muted); font-size:17px; }
+    .steps { display:grid; gap:14px; margin-top:22px; }
+    section { display:grid; grid-template-columns:42px 1fr; gap:16px; padding:22px; border:1px solid var(--line); border-radius:18px; background:rgba(18,19,24,.9); }
+    .number { width:34px; height:34px; display:grid; place-items:center; border-radius:11px; color:white; background:linear-gradient(145deg,var(--red),#d63d50); font-weight:800; box-shadow:0 8px 24px #ff5b6133; }
+    h2 { margin:2px 0 5px; font-size:18px; }
+    p,ol { margin:0; color:var(--muted); }
+    ol { padding-left:1.25em; }
+    strong { color:var(--text); }
+    .warning { border-color:#593137; background:linear-gradient(135deg,#201316,#121318 55%); }
+    .warning .number { background:#2a2022; color:var(--red); box-shadow:none; }
+    code { padding:2px 6px; border:1px solid var(--line); border-radius:6px; color:#ffd2d4; background:#090a0d; }
+    footer { margin-top:20px; text-align:center; color:#717179; font-size:12px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Cardputer Bridge · v@VERSION@</div>
+    <h1>三步接入你的 Cardputer</h1>
+    <p>把 App 拖入“应用程序”，明确允许首次打开，再由 App 完成系统麦克风与固件设置。</p>
+  </header>
+  <div class="steps">
+    <section><div class="number">1</div><div><h2>安装应用</h2><p>回到此磁盘窗口，将 <strong>Cardputer Bridge</strong> 拖到右侧的 <strong>Applications</strong>。复制完成后，从“应用程序”文件夹打开。</p></div></section>
+    <section class="warning"><div class="number">!</div><div><h2>如果看到“Apple 无法验证”</h2><ol><li>看到“未打开 Cardputer Bridge”和“移动到废纸篓”时，点击<strong>完成</strong>，不要移到废纸篓。</li><li>打开<strong>系统设置 → 隐私与安全性</strong>，滚动到“安全性”。</li><li>在 Cardputer Bridge 提示旁点击<strong>仍要打开</strong>，认证后再次选择“打开”。</li></ol><p style="margin-top:8px">这是未加入 Apple Developer Program 的开源 ad-hoc 版本会出现的系统提示；它不代表下载已损坏。请从项目 GitHub Release 下载并校验 SHA-256。</p></div></section>
+    <section><div class="number">2</div><div><h2>安装系统麦克风</h2><p>在首次设置的“系统麦克风”步骤点击<strong>安装系统麦克风</strong>。macOS 会显示一次标准管理员授权框；成功后可在录音、会议和语音 App 中选择 <code>Cardputer Microphone</code>。</p></div></section>
+    <section><div class="number">3</div><div><h2>连接 Cardputer</h2><p>通过 USB 连接 Cardputer-ADV，按引导安装签名固件，然后完成 BLE 安全配对与 2.4 GHz Wi-Fi 配置。后续版本可直接通过 App 更新。</p></div></section>
+  </div>
+  <footer>开源 Public Preview · Apple silicon · macOS 15+</footer>
+</main>
+</body>
+</html>

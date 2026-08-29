@@ -28,8 +28,9 @@ def main() -> int:
         "real bridge readiness": "systemMicrophonePipelineReady" in source,
         "daily microphone page stays focused": '"system-microphone-status"' not in source,
         "onboarding status identifier": '"onboarding-system-microphone-status"' in source,
-        "full pipeline readiness gate": "systemMicrophonePipelineReady" in source
-        and ".disabled(!systemMicrophonePipelineReady)" in source,
+        "full pipeline readiness gate": "if systemMicrophonePipelineReady" in source
+        and 'Button("继续")' in source
+        and '"安装系统麦克风"' in source,
         "Core Audio enumeration": "CardputerAudioSystemInputIsPublished" in bridge_source
         and "AudioObjectGetPropertyData" in bridge_source
         and "io.nexu.cardputerbridge.microphone" in bridge_source,
