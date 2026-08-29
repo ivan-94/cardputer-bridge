@@ -82,8 +82,9 @@ driver="$build_root/audio-plugin/CardputerBridgeAudio.driver"
 codesign --verify --deep --strict "$driver"
 
 audio_installer_resources="$app/Contents/Resources/AudioInstaller"
-mkdir -p "$audio_installer_resources/Audio"
-ditto "$driver" "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"
+driver_archive="$audio_installer_resources/CardputerBridgeAudio.driver.zip"
+mkdir -p "$audio_installer_resources"
+ditto -c -k --sequesterRsrc --keepParent "$driver" "$driver_archive"
 cp \
   "$project_dir/packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh" \
   "$audio_installer_resources/install-bundled-audio-driver.sh"
@@ -93,7 +94,14 @@ chmod +x \
   "$audio_installer_resources/check-audio-hal-runtime.sh"
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
-codesign --verify --deep --strict "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"
+[[ -f "$driver_archive" ]]
+[[ ! -e "$audio_installer_resources/Audio/CardputerBridgeAudio.driver" ]]
+driver_archive_verify="$build_root/driver-archive-verify"
+mkdir -p "$driver_archive_verify"
+ditto -x -k "$driver_archive" "$driver_archive_verify"
+codesign --verify --deep --strict \
+  "$driver_archive_verify/CardputerBridgeAudio.driver"
+"$project_dir/scripts/verify-macos-app-launch.sh" "$app"
 
 mkdir -p "$payload/Audio"
 ditto "$app" "$payload/Cardputer Bridge.app"
@@ -183,9 +191,15 @@ mounted_app="$mountpoint/Cardputer Bridge.app"
 [[ -f "$mountpoint/安装说明.html" ]]
 [[ -x "$mounted_app/Contents/Resources/AudioInstaller/install-bundled-audio-driver.sh" ]]
 [[ -x "$mounted_app/Contents/Resources/AudioInstaller/check-audio-hal-runtime.sh" ]]
+[[ -f "$mounted_app/Contents/Resources/AudioInstaller/CardputerBridgeAudio.driver.zip" ]]
+[[ ! -e "$mounted_app/Contents/Resources/AudioInstaller/Audio/CardputerBridgeAudio.driver" ]]
 codesign --verify --deep --strict "$mounted_app"
-codesign --verify --deep --strict \
-  "$mounted_app/Contents/Resources/AudioInstaller/Audio/CardputerBridgeAudio.driver"
+mounted_driver_verify="$mount_root/driver-verify"
+mkdir -p "$mounted_driver_verify"
+ditto -x -k \
+  "$mounted_app/Contents/Resources/AudioInstaller/CardputerBridgeAudio.driver.zip" \
+  "$mounted_driver_verify"
+codesign --verify --deep --strict "$mounted_driver_verify/CardputerBridgeAudio.driver"
 hdiutil detach "$mountpoint" >/dev/null
 dmg_attached=0
 trap - EXIT

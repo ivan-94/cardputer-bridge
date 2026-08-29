@@ -37,6 +37,7 @@ class MacOSReleaseContractTests(unittest.TestCase):
             "uninstall-audio-plugin.command",
             "restore-audio-plugin.command",
             "check-audio-hal-runtime.sh",
+            "verify-macos-app-launch.sh",
         ):
             self.assertIn(required, script)
         self.assertNotIn("Developer ID", script)
@@ -127,14 +128,24 @@ class MacOSReleaseContractTests(unittest.TestCase):
 
     def test_release_app_embeds_audio_driver_installer(self) -> None:
         script = (PROJECT / "scripts/build-macos-release.sh").read_text()
+        installer = (
+            PROJECT
+            / "packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh"
+        ).read_text()
         controller = (
             PROJECT / "macos/Sources/CardputerBridgeApp/AudioDriverInstallerController.swift"
         )
 
         self.assertTrue(controller.is_file())
         self.assertIn("AudioInstaller", script)
-        self.assertIn("CardputerBridgeAudio.driver", script)
+        self.assertIn("CardputerBridgeAudio.driver.zip", script)
+        self.assertNotIn(
+            'ditto "$driver" "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"',
+            script,
+        )
         self.assertIn("install-bundled-audio-driver.sh", script)
+        self.assertIn("CardputerBridgeAudio.driver.zip", installer)
+        self.assertIn("ditto -x -k", installer)
         self.assertIn("with administrator privileges", controller.read_text())
 
     def test_install_guide_covers_ad_hoc_gatekeeper_recovery(self) -> None:

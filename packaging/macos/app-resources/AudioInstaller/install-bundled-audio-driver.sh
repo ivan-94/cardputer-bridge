@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-source_driver="$script_dir/Audio/CardputerBridgeAudio.driver"
+source_archive="$script_dir/CardputerBridgeAudio.driver.zip"
 preflight="$script_dir/check-audio-hal-runtime.sh"
 destination="/Library/Audio/Plug-Ins/HAL/CardputerBridgeAudio.driver"
 backup_root="/Library/Application Support/Cardputer Bridge/Backups/Audio"
@@ -19,10 +19,9 @@ new_driver_installed=0
 }
 [[ -x "$preflight" ]] || { printf '找不到运行时兼容性检查。\n' >&2; exit 1; }
 "$preflight"
-[[ -d "$source_driver" ]] || { printf '应用内缺少音频驱动。\n' >&2; exit 1; }
-[[ ! -L "$source_driver" ]] || { printf '拒绝安装符号链接来源。\n' >&2; exit 1; }
+[[ -f "$source_archive" ]] || { printf '应用内缺少音频驱动归档。\n' >&2; exit 1; }
+[[ ! -L "$source_archive" ]] || { printf '拒绝安装符号链接来源。\n' >&2; exit 1; }
 [[ ! -L "$destination" ]] || { printf '拒绝替换符号链接目标。\n' >&2; exit 1; }
-/usr/bin/codesign --verify --deep --strict "$source_driver"
 
 rollback() {
   status=$?
@@ -45,7 +44,14 @@ trap rollback EXIT
 /bin/mkdir -p "/Library/Audio/Plug-Ins/HAL" "$backup_root"
 staging_root="$(/usr/bin/mktemp -d "/Library/Audio/Plug-Ins/HAL/.CardputerBridgeAudio.install.XXXXXX")"
 staging="$staging_root/CardputerBridgeAudio.driver"
-/usr/bin/ditto "$source_driver" "$staging"
+/usr/bin/ditto -x -k "$source_archive" "$staging_root"
+[[ -d "$staging" ]] || { printf '音频驱动归档不完整。\n' >&2; exit 1; }
+[[ ! -L "$staging" ]] || { printf '拒绝安装符号链接驱动。\n' >&2; exit 1; }
+if [[ -n "$(/usr/bin/find "$staging_root" -mindepth 1 -maxdepth 1 ! -name CardputerBridgeAudio.driver -print -quit)" ]]; then
+  printf '音频驱动归档包含意外内容。\n' >&2
+  exit 1
+fi
+/usr/bin/codesign --verify --deep --strict "$staging"
 /usr/sbin/chown -R root:wheel "$staging"
 /usr/bin/codesign --verify --deep --strict "$staging"
 

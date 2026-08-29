@@ -9,6 +9,8 @@
 3. 在首次设置的“系统麦克风”步骤点击“安装系统麦克风”，完成一次标准管理员认证。App 会安装随包附带、已验证签名的驱动并重载 Core Audio。
 4. 通过 USB 连接 Cardputer-ADV，按应用引导安装固件，再完成 BLE 配对和 2.4 GHz Wi-Fi 配置。
 
+手工替换为新的 ad-hoc 版本时，macOS 可能再次要求“仍要打开”。如果这台 Mac 曾安装 v0.10.2，并在允许后仍持续 Dock 跳动，请退出卡住的进程，将新版 App 临时命名为 `Cardputer Bridge v@VERSION@.app` 后再打开；这是 macOS 27 Beta 对旧路径保留的错误策略记录，不会影响已有配置。
+
 ZIP 备用包仍附带 install-audio-plugin.command。如果 App 内安装入口不可用，可按住 Control 点击该脚本，选择“打开”，输入 INSTALL 并进行管理员认证。
 
 安装器会将已有音频驱动备份到 /Library/Application Support/Cardputer Bridge/Backups/Audio，然后原子替换系统驱动。卸载时运行 uninstall-audio-plugin.command 并输入 UNINSTALL；若升级后需要回退，运行 restore-audio-plugin.command 并输入 RESTORE，它会恢复最近一次旧版备份。
