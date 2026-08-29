@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SPEC_PATH = PROJECT_ROOT.parents[1] / "specs" / "Cardputer-Bridge-实现-Spec.md"
+PROTOCOL_PATH = PROJECT_ROOT / "docs" / "ble-protocol-v1.md"
 FIRMWARE_PATH = PROJECT_ROOT / "firmware" / "components" / "ble_bridge" / "ble_bridge.c"
 SWIFT_PATH = (
     PROJECT_ROOT
@@ -42,23 +42,23 @@ def canonical_uuid_from_firmware(source: str, symbol: str) -> str:
 
 
 class BLEProtocolContractTests(unittest.TestCase):
-    def test_firmware_and_swift_use_the_spec_uuid_contract(self) -> None:
-        spec = SPEC_PATH.read_text(encoding="utf-8")
+    def test_firmware_and_swift_use_the_standalone_uuid_contract(self) -> None:
+        protocol = PROTOCOL_PATH.read_text(encoding="utf-8")
         firmware = FIRMWARE_PATH.read_text(encoding="utf-8")
         swift = SWIFT_PATH.read_text(encoding="utf-8")
 
         for label, (firmware_symbol, swift_symbol) in IMPLEMENTED_UUIDS.items():
             spec_match = re.search(
                 rf"\| {re.escape(label)} \| `([0-9a-fA-F-]{{36}})` \|",
-                spec,
+                protocol,
             )
-            self.assertIsNotNone(spec_match, f"spec UUID missing: {label}")
+            self.assertIsNotNone(spec_match, f"protocol UUID missing: {label}")
             expected = spec_match.group(1).lower()
 
             self.assertEqual(
                 canonical_uuid_from_firmware(firmware, firmware_symbol),
                 expected,
-                f"firmware drifted from spec: {label}",
+                f"firmware drifted from protocol: {label}",
             )
 
             swift_match = re.search(
@@ -69,7 +69,7 @@ class BLEProtocolContractTests(unittest.TestCase):
             self.assertEqual(
                 swift_match.group(1).lower(),
                 expected,
-                f"Swift drifted from spec: {label}",
+                f"Swift drifted from protocol: {label}",
             )
 
 

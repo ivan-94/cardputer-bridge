@@ -7,7 +7,13 @@ build_root="${CARDPUTER_BRIDGE_BUILD_ROOT:-$HOME/.local/share/cardputer-bridge/b
 derived_data="$build_root/xcode"
 app="$derived_data/Build/Products/Debug/Cardputer Bridge.app"
 executable="$app/Contents/MacOS/Cardputer Bridge"
-developer_dir="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+if [[ -n "${DEVELOPER_DIR:-}" ]]; then
+  developer_dir="$DEVELOPER_DIR"
+elif [[ -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
+  developer_dir=/Applications/Xcode-beta.app/Contents/Developer
+else
+  developer_dir="$(xcode-select -p)"
+fi
 . "$project_dir/scripts/macos-build-lock.sh"
 acquire_macos_build_lock "$build_root"
 

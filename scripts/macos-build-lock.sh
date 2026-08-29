@@ -2,6 +2,10 @@
 
 acquire_macos_build_lock() {
     macos_build_lock_dir="$1/macos-build.lock"
+    if ! mkdir -p "$1"; then
+        printf 'MACOS_BUILD_BLOCKED build_root_unavailable path=%s\n' "$1" >&2
+        return 2
+    fi
     if ! mkdir "$macos_build_lock_dir" 2>/dev/null; then
         printf 'MACOS_BUILD_BLOCKED concurrent_build lock=%s\n' \
             "$macos_build_lock_dir" >&2
