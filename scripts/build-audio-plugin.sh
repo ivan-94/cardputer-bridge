@@ -13,9 +13,15 @@ audio_pcm_consumer="$build_root/audio-plugin/audio_pcm_consumer"
 audio_test_producer="$build_root/audio-plugin/audio_test_producer"
 audio_broker_test_server="$build_root/audio-plugin/audio_broker_test_server"
 audio_shared_memory_test="$build_root/audio-plugin/audio_shared_memory_test"
-developer_dir="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+if [[ -n "${DEVELOPER_DIR:-}" ]]; then
+  developer_dir="$DEVELOPER_DIR"
+elif [[ -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
+  developer_dir="/Applications/Xcode-beta.app/Contents/Developer"
+else
+  developer_dir="$(xcode-select -p)"
+fi
 compiler="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++"
-sdk="$developer_dir/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk"
+sdk="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path)"
 
 case "$staging_bundle" in
   "$build_root"/audio-plugin/.CardputerBridgeAudio.driver.*) ;;

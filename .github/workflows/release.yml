@@ -1,4 +1,4 @@
-name: Firmware Release
+name: Release
 
 on:
   push:
@@ -53,13 +53,110 @@ jobs:
           cp firmware/build/ota_data_initial.bin .release/
           cp firmware/build/partition_table/partition-table.bin .release/
           cp firmware/build/bootloader/bootloader.bin .release/
-      - name: Publish immutable GitHub Release assets
-        uses: softprops/action-gh-release@v2
+      - name: Stage firmware release assets
+        uses: actions/upload-artifact@v4
         with:
-          fail_on_unmatched_files: true
-          files: |
+          name: firmware-release-assets
+          if-no-files-found: error
+          retention-days: 1
+          path: |
             .release/cardputer-bridge-release.json
             .release/cardputer_bridge_firmware.bin
             .release/ota_data_initial.bin
             .release/partition-table.bin
             .release/bootloader.bin
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build tools
+        run: brew install xcodegen
+      - name: Verify macOS app and audio contracts
+        run: ./scripts/verify-macos.sh
+      - name: Build verified ad-hoc macOS package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ./scripts/build-macos-release.sh --version "$version" --output .release
+      - name: Stage macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-assets
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            .release/Cardputer-Bridge-v*-macOS-arm64.zip
+            .release/Cardputer-Bridge-v*-macOS-arm64.sha256
+
+  publish:
+    needs: [firmware, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release-assets'
+          path: .release
+          merge-multiple: true
+      - name: Stage an atomic draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="$RUNNER_TEMP/cardputer-release-notes.md"
+          printf '%s\n\n%s\n' \
+            'Public Preview。macOS 应用和系统音频驱动使用 ad-hoc 签名，尚未经过 Apple 公证；首次打开请按安装说明操作并校验 SHA-256。' \
+            'Cardputer 固件镜像使用 Secure Boot v2 格式的 RSA-3072 签名（未熔断硬件 Secure Boot eFuse），OTA 发布清单使用独立的 Ed25519 签名。' \
+            > "$notes_file"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --title "Cardputer Bridge $GITHUB_REF_NAME" \
+              --notes-file "$notes_file"
+          fi
+          assets=(
+            .release/cardputer-bridge-release.json
+            .release/cardputer_bridge_firmware.bin
+            .release/ota_data_initial.bin
+            .release/partition-table.bin
+            .release/bootloader.bin
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.zip"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.sha256"
+          )
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+      - name: Verify every asset and publish latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          assets=(
+            .release/cardputer-bridge-release.json
+            .release/cardputer_bridge_firmware.bin
+            .release/ota_data_initial.bin
+            .release/partition-table.bin
+            .release/bootloader.bin
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.zip"
+            ".release/Cardputer-Bridge-v${version}-macOS-arm64.sha256"
+          )
+          for asset in "${assets[@]}"; do
+            test "$(stat -c %s "$asset")" -gt 0
+          done
+          expected_assets="$(for asset in "${assets[@]}"; do
+            printf '%s\t%s\n' "$(basename "$asset")" "$(stat -c %s "$asset")"
+          done | LC_ALL=C sort)"
+          actual_assets="$(gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | [.name, (.size | tostring)] | @tsv' | LC_ALL=C sort)"
+          test "$actual_assets" = "$expected_assets"
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --prerelease=false \
+            --latest

@@ -9,8 +9,8 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     CODE_SIGNING_ALLOWED: NO
-    CURRENT_PROJECT_VERSION: 2
-    MARKETING_VERSION: 0.2.0
+    CURRENT_PROJECT_VERSION: 10
+    MARKETING_VERSION: 0.10.0
 targets:
   CardputerBridgeCore:
     type: framework
