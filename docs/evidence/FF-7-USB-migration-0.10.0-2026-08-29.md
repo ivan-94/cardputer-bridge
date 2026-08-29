@@ -49,7 +49,7 @@
 ## 未解除的 Gate
 
 - 未从 App UI 完整点击一遍下载→写入→重连；本次使用与 App 相同的固定 `espflash` 版本、hash、分区和写入顺序执行实机迁移。
-- 未验证真实 HTTPS OTA，因为当前 GitHub 仓库为 private，设备无法匿名下载 Release 资产。
+- 未验证真实 HTTPS OTA；本证据生成时仓库为 private。仓库随后已切换为 public，但首个签名 Release 与真实下载/安装尚未执行。
 - 未执行 OTA 下载/写入途中的断电矩阵，也未实机观察 rollback 回到上一健康槽。
 - 未执行 15 分钟及以上 soak；启动时曾出现一次 HID report failure 计数，后续观察未增长，仍应在 soak 中确认为连接前的瞬态发送而非稳态故障。
 
@@ -88,5 +88,6 @@
 
 ### Open questions / risks
 
-- private Release 资产的设备下载方案尚未决定。
+- 正式更新采用公开 GitHub Release；本地开发采用 Mac 选择本机 `.bin` 后通过局域网交给同一 OTA 安装链路。后者尚未实现。
+- 仓库已经公开，但首个签名 Release 资产尚未发布。
 - OTA 断电 rollback、长时 soak 和真实 App UI installer 流程仍需实机验收。

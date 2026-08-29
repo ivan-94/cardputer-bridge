@@ -10,12 +10,12 @@ macOS App 是安装入口，用户不需要先配置 ESP-IDF。首次设置的�
 
 1. App 从 GitHub Release 下载签名发布清单，先校验内置的 Ed25519 发布公钥。
 2. 旧的单分区固件（`0.9.x`）需要一次 USB 迁移。App 会下载、校验 SHA-256，然后用固定版本且已校验的 `espflash` 写入 factory、OTA data、partition table 和 bootloader。流程不执行整片擦除，因此 NVS 配置保留。
-3. 迁移到 `layout 2` 后，后续版本通过 Wi-Fi HTTPS OTA 安装，BLE 只传递经验证的版本和下载地址指令。
+3. 迁移到 `layout 2` 后，后续版本通过 Wi-Fi OTA 写入空闲槽。正式更新由 App 发现 GitHub Release 后发起；本地开发入口将允许开发者选择本机 `.bin`，再由 App 通过局域网交给同一套 OTA 写入、健康确认与 rollback 链路。当前代码已实现 GitHub URL OTA，本地文件推送入口尚未实现。
 4. 固件拒绝降级、错误产品镜像和不完整下载。新镜像在键盘与音频服务成功启动并稳定运行 10 秒后才标记为健康；否则下次启动回滚。
 
 当前生产固件版本为 `0.10.0`，分区包含 `factory` 和两个 2 MiB OTA 槽。RSA-3072 生产签名构建、一次 USB 分区迁移、四区逐字节 Flash verify、10 秒健康确认、升级后 boot/serial-control/BLE heartbeat 已通过当前 Cardputer-Adv 实机验证，且 NVS 中的 Wi-Fi、bond 和 schema v3/version 49 均保留。证据见 [`docs/evidence/FF-7-USB-migration-0.10.0-2026-08-29.md`](docs/evidence/FF-7-USB-migration-0.10.0-2026-08-29.md)。这个策略防止远程 OTA 替换为未签名固件，但尚未熔断 Secure Boot eFuse，因此拥有物理接触的人仍可用 ROM download mode 重刷设备。
 
-> 发布门槛：仓库目前保持 private，匿名用户无法下载 GitHub Release，所以 OTA 只在仓库公开或迁移到公开资产服务后才算真正可用。macOS App 目前没有 Developer ID 证书，可在本机构建运行，但不应伪装成已可无提示分发的正式 App。
+> 发布门槛：仓库已于 2026-08-29 切换为 public，匿名下载的仓库可见性阻塞已经解除；但首个签名 GitHub Release 尚未发布，真实 OTA 仍未执行。macOS App 目前没有 Developer ID 证书，可在本机构建运行，但不应伪装成已可无提示分发的正式 App。
 
 最快的本机入口：
 
