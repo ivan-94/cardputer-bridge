@@ -155,6 +155,7 @@ class MacOSReleaseContractTests(unittest.TestCase):
             controller.read_text(),
         )
 
+    @unittest.skipUnless(Path("/bin/zsh").is_file(), "requires macOS zsh")
     def test_bundled_audio_installer_runs_with_the_apps_zsh_interpreter(self) -> None:
         installer = (
             PROJECT
