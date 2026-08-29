@@ -95,6 +95,8 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("Cardputer-Bridge-v*-macOS-arm64.sha256", workflow)
         self.assertIn("ad-hoc", workflow)
         self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem", workflow)
+        self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            cardputer_bridge_firmware.bin", workflow)
+        self.assertNotIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            build/cardputer_bridge_firmware.bin", workflow)
         self.assertNotIn(".release/*", workflow)
 
 

@@ -37,7 +37,7 @@ jobs:
             -D SDKCONFIG=sdkconfig.production build &&
             idf.py secure-verify-signature --version 2
             --keyfile ../keys/firmware-signing-rsa3072.pem
-            build/cardputer_bridge_firmware.bin
+            cardputer_bridge_firmware.bin
       - name: Create signed manifest
         run: |
           version="${GITHUB_REF_NAME#v}"
