@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 source_archive="$script_dir/CardputerBridgeAudio.driver.zip"
 preflight="$script_dir/check-audio-hal-runtime.sh"
 destination="/Library/Audio/Plug-Ins/HAL/CardputerBridgeAudio.driver"

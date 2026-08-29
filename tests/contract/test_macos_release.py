@@ -1,4 +1,5 @@
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -147,10 +148,35 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("CardputerBridgeAudio.driver.zip", installer)
         self.assertIn("ditto -x -k", installer)
         self.assertIn("with administrator privileges", controller.read_text())
+        self.assertNotIn('"/bin/zsh "', controller.read_text())
+        self.assertIn("userFacingInstallError", controller.read_text())
+        self.assertNotIn(
+            "phase = .failed(detail.trimmingCharacters",
+            controller.read_text(),
+        )
+
+    def test_bundled_audio_installer_runs_with_the_apps_zsh_interpreter(self) -> None:
+        installer = (
+            PROJECT
+            / "packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh"
+        )
+
+        result = subprocess.run(
+            ["/bin/zsh", str(installer)],
+            cwd=PROJECT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("需要 macOS 管理员权限", result.stderr)
+        self.assertNotIn("BASH_SOURCE", result.stderr)
 
     def test_install_guide_covers_ad_hoc_gatekeeper_recovery(self) -> None:
         guide = (PROJECT / "packaging/macos/INSTALL.md").read_text()
         html = PROJECT / "packaging/macos/dmg/安装说明.html"
+        html_text = html.read_text()
 
         self.assertTrue(html.is_file())
         for required in (
@@ -161,7 +187,64 @@ class MacOSReleaseContractTests(unittest.TestCase):
             "安装系统麦克风",
         ):
             self.assertIn(required, guide)
-            self.assertIn(required, html.read_text())
+            self.assertIn(required, html_text)
+
+        for rejected_workaround in (
+            "Cardputer Bridge v@VERSION@.app",
+            "v0.10.2",
+        ):
+            self.assertNotIn(rejected_workaround, guide)
+            self.assertNotIn(rejected_workaround, html_text)
+
+    def test_release_keeps_the_application_name_stable(self) -> None:
+        project = (PROJECT / "macos/project.yml").read_text()
+
+        self.assertIn("PRODUCT_NAME: Cardputer Bridge", project)
+        self.assertIn("INFOPLIST_KEY_CFBundleDisplayName: Cardputer Bridge", project)
+        self.assertNotIn("PRODUCT_NAME: Cardputer Bridge v", project)
+
+    def test_release_notes_are_written_for_users(self) -> None:
+        workflow = (PROJECT / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("下载 `macOS-arm64.dmg`", workflow)
+        self.assertIn("设备、系统与网络要求", workflow)
+        self.assertNotIn("Public Preview", workflow)
+        self.assertNotIn("Secure Boot v2 格式的 RSA-3072", workflow)
+
+    def test_readme_is_a_user_facing_product_guide(self) -> None:
+        readme = (PROJECT / "README.md").read_text()
+
+        for required in (
+            "你需要准备",
+            "Cardputer-ADV",
+            "Apple Silicon",
+            "2.4 GHz Wi-Fi",
+            "USB-C",
+            "管理员权限",
+            "如果 macOS 阻止打开",
+            "docs/images/app-overview.png",
+            "docs/images/app-shortcuts.png",
+            "docs/images/cardputer-adv-product.webp",
+        ):
+            self.assertIn(required, readme)
+
+        for forbidden in (
+            "当前公开预览版本",
+            "当前代码已经实现",
+            "已验证状态",
+            "完整实机边界",
+            "ESP-IDF Secure Boot v2",
+            "RSA-3072",
+            "v0.10.",
+        ):
+            self.assertNotIn(forbidden, readme)
+
+        for image in (
+            "app-overview.png",
+            "app-shortcuts.png",
+            "cardputer-adv-product.webp",
+        ):
+            self.assertTrue((PROJECT / "docs/images" / image).is_file())
 
 
 if __name__ == "__main__":

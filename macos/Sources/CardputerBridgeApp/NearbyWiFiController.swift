@@ -68,7 +68,7 @@ final class NearbyWiFiController: ObservableObject {
                 nil
             )
         } catch {
-            return ([], "无法扫描 Wi-Fi：\(error.localizedDescription)")
+            return ([], "无法扫描附近的 Wi-Fi，请检查系统权限后重试。")
         }
     }
 }

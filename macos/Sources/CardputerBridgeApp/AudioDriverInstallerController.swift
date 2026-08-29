@@ -54,11 +54,33 @@ final class AudioDriverInstallerController: ObservableObject {
             phase = .installed
             return true
         }
-        let detail = result.standardError.isEmpty
-            ? (result.standardOutput.isEmpty ? "安装已取消或未能完成。" : result.standardOutput)
-            : result.standardError
-        phase = .failed(detail.trimmingCharacters(in: .whitespacesAndNewlines))
+        phase = .failed(Self.userFacingInstallError(
+            exitCode: result.exitCode,
+            standardOutput: result.standardOutput,
+            standardError: result.standardError
+        ))
         return false
+    }
+
+    nonisolated private static func userFacingInstallError(
+        exitCode: Int32,
+        standardOutput: String,
+        standardError: String
+    ) -> String {
+        let detail = "\(standardOutput)\n\(standardError)".lowercased()
+        if exitCode == -128 || detail.contains("user canceled") || detail.contains("用户取消") {
+            return "安装已取消。"
+        }
+        if detail.contains("归档") || detail.contains("安装包不完整") {
+            return "系统麦克风组件不完整，请重新安装最新版 App。"
+        }
+        if detail.contains("codesign") || detail.contains("code object is not signed") {
+            return "系统麦克风组件验证失败，请重新下载安装包。"
+        }
+        if detail.contains("运行时兼容性") {
+            return "当前 macOS 无法加载系统麦克风组件。"
+        }
+        return "未能安装系统麦克风，请重试。"
     }
 
     nonisolated private static func runPrivilegedHelper(
@@ -72,7 +94,7 @@ final class AudioDriverInstallerController: ObservableObject {
             "-e",
             "on run argv",
             "-e",
-            "do shell script \"/bin/zsh \" & quoted form of (item 1 of argv) with administrator privileges",
+            "do shell script quoted form of (item 1 of argv) with administrator privileges",
             "-e",
             "end run",
             "--",

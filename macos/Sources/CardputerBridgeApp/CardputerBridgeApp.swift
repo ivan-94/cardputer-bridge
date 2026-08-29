@@ -144,7 +144,7 @@ final class CardputerBridgeAppDelegate: NSObject, NSApplicationDelegate {
 
     private var menuConnectionStatus: String {
         switch bluetooth.state.phase {
-        case .ready: "Cardputer 已安全连接"
+        case .ready: "Cardputer 已连接"
         case .scanning, .connecting, .discoveringServices, .authenticating: "正在连接 Cardputer…"
         case .blocked, .failed: "Cardputer 连接不可用"
         case .waitingForBluetooth, .deviceFound: "等待 Cardputer"
@@ -189,7 +189,7 @@ final class AppPreferencesController: ObservableObject {
             }
             fault = nil
         } catch {
-            fault = error.localizedDescription
+            fault = "无法更新登录项设置，请在系统设置中重试。"
         }
         refresh()
     }
@@ -286,15 +286,9 @@ private struct BridgeRootView: View {
             Text("Cardputer Bridge")
                 .font(.headline)
             Spacer()
-            if !setupCompleted {
-                Label("首次设置", systemImage: "circle.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(BridgeTheme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(BridgeTheme.surfaceRaised, in: Capsule())
+            if setupCompleted && bluetooth.state.phase != .waitingForBluetooth {
+                statusBadge
             }
-            statusBadge
         }
         .padding(.horizontal, 18)
         .frame(height: 54)
@@ -357,7 +351,7 @@ private struct BridgeRootView: View {
                 audioSetup
             }
         case .device:
-            simplePage(title: "设备与连接", detail: "分别查看键盘、控制通道、Wi-Fi 与音频状态") {
+            simplePage(title: "设备与连接", detail: "查看 Cardputer 与这台 Mac 的连接状态。") {
                 deviceConnectionDetails
             }
         case .settings:
@@ -365,13 +359,11 @@ private struct BridgeRootView: View {
                 settingsContent
             }
         case .about:
-            simplePage(title: "关于", detail: "让 Cardputer 成为这台 Mac 的键盘和麦克风。") {
+            simplePage(title: "关于", detail: "Cardputer 的无线麦克风与快捷键伴侣。") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Cardputer Bridge")
                         .font(.title2.bold())
-                    Text("快捷键通过蓝牙发送，麦克风声音通过当前局域网传输。")
-                        .foregroundStyle(BridgeTheme.secondaryText)
-                    Text("麦克风默认静音；控制链路失联后设备会自动关闭采集。")
+                    Text("版本 \(appVersion)")
                         .foregroundStyle(BridgeTheme.secondaryText)
                     Divider()
                     HStack {
@@ -390,6 +382,10 @@ private struct BridgeRootView: View {
                             .font(.caption)
                             .foregroundStyle(BridgeTheme.secondaryText)
                     }
+                    Button("查看项目主页") {
+                        openURL(URL(string: "https://github.com/ivan-94/cardputer-bridge")!)
+                    }
+                    .buttonStyle(.link)
                 }
                 .padding(20)
                 .bridgePanel()
@@ -403,7 +399,7 @@ private struct BridgeRootView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("概览")
                         .font(.system(size: 30, weight: .bold))
-                    Text("Cardputer 现在是这台 Mac 的键盘和麦克风。")
+                    Text("查看键盘、麦克风和设备状态。")
                         .foregroundStyle(BridgeTheme.secondaryText)
                 }
 
@@ -424,9 +420,9 @@ private struct BridgeRootView: View {
                         }
 
                         HStack(spacing: 18) {
-                            overviewStatus("键盘", value: keyboardStatus, detail: "Bluetooth LE HID")
-                            overviewStatus("麦克风", value: systemMicrophonePipelineReady ? "系统可用" : "未就绪", detail: "\(currentWiFiName) · 约 60 ms 缓冲")
-                            overviewStatus("快捷键", value: shortcutConfigurationIsSynced ? "已同步" : "待同步", detail: "以 Mac 设置为准")
+                            overviewStatus("键盘", value: keyboardStatus, detail: "直接输入 Mac")
+                            overviewStatus("麦克风", value: systemMicrophonePipelineReady ? "系统可用" : "未就绪", detail: microphoneNetworkSummary)
+                            overviewStatus("快捷键", value: shortcutConfigurationIsSynced ? "已同步" : "待同步", detail: "按下即可触发")
                             overviewStatus("设备", value: deviceBatteryText, detail: deviceSignalText)
                         }
                     }
@@ -436,7 +432,7 @@ private struct BridgeRootView: View {
                         .frame(width: 238, height: 143)
                 }
                 .padding(22)
-                .bridgePanel(border: BridgeTheme.success.opacity(0.25))
+                .bridgePanel(border: bothSystemInputsReady ? BridgeTheme.success.opacity(0.25) : BridgeTheme.border)
 
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 12) {
@@ -454,7 +450,7 @@ private struct BridgeRootView: View {
                         }
                         AudioLevelBars(level: audio.metrics.signalLevel, isActive: bluetooth.micIntent == "live")
                             .padding(.vertical, 8)
-                        Text(bluetooth.micIntent == "live" ? "声音正通过局域网进入 macOS。" : "已经连接，但不会发送你的声音。")
+                        Text(microphoneOverviewDetail)
                             .font(.caption)
                             .foregroundStyle(BridgeTheme.secondaryText)
                         actionButton
@@ -514,7 +510,7 @@ private struct BridgeRootView: View {
 
                 if bluetooth.state.phase == .authenticating {
                     Label(
-                        "正在恢复加密控制通道。首次连接时 macOS 可能要求配对；已配对设备会直接继续。",
+                        "正在重新连接 Cardputer…",
                         systemImage: "lock.shield"
                     )
                     .foregroundStyle(.orange)
@@ -665,29 +661,47 @@ private struct BridgeRootView: View {
     }
 
     private var systemMicrophoneTitle: String {
+        if case .failed = audioDriverInstaller.phase {
+            return "Cardputer Microphone 安装失败"
+        }
+        if !audioDriverInstaller.isInstalled {
+            return "Cardputer Microphone 尚未安装"
+        }
         if audio.systemMicrophoneReady, audio.fault != nil {
-            return "Cardputer Microphone 已注册，音频链路异常"
+            return "Cardputer Microphone 暂不可用"
         }
         if audio.systemMicrophoneReady {
-            return "Cardputer Microphone 已注册"
+            return "Cardputer Microphone 可用"
         }
         if audio.fault != nil {
-            return "系统麦克风连接失败"
+            return "Cardputer Microphone 暂不可用"
         }
-        return "正在连接系统麦克风"
+        return "正在连接 Cardputer Microphone"
     }
 
     private var systemMicrophoneDetail: String {
-        if let fault = audio.fault {
-            return "音频桥接尚未就绪：\(fault)"
+        if case .failed(let message) = audioDriverInstaller.phase {
+            return message
+        }
+        if !audioDriverInstaller.isInstalled {
+            return "安装需要一次管理员授权。"
+        }
+        if audio.fault != nil {
+            return "暂时无法接收声音，请重试。"
         }
         if audio.systemMicrophoneReady {
-            return "Core Audio 已枚举系统输入且音频桥接就绪；可在录音、会议或语音 App 中选择 Cardputer Microphone。"
+            return "可在录音、会议或语音 App 中选择 Cardputer Microphone。"
         }
-        return "正在等待本机音频桥接就绪。完成前 Cardputer 保持静音，不会上传声音。"
+        return "正在等待系统输入设备就绪。"
     }
 
     private var systemMicrophoneIcon: String {
+        if case .failed = audioDriverInstaller.phase {
+            return "exclamationmark.triangle.fill"
+        }
+        if !audioDriverInstaller.isInstalled {
+            return "mic"
+        }
         if audio.fault != nil {
             return "exclamationmark.triangle.fill"
         }
@@ -698,6 +712,12 @@ private struct BridgeRootView: View {
     }
 
     private var systemMicrophoneColor: Color {
+        if case .failed = audioDriverInstaller.phase {
+            return BridgeTheme.accent
+        }
+        if !audioDriverInstaller.isInstalled {
+            return BridgeTheme.secondaryText
+        }
         if audio.fault != nil {
             return BridgeTheme.accent
         }
@@ -716,11 +736,10 @@ private struct BridgeRootView: View {
 
     private var deviceConnectionDetails: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-            capability("BLE 键盘", value: keyboardStatus, icon: "keyboard")
-            capability("GATT 控制", value: controlStatus, icon: "lock.shield")
-            capability("Wi-Fi", value: deviceWiFiConnected ? "已连接" : "未连接", icon: "wifi")
-            capability("音频会话", value: audioStatus, icon: "waveform")
+            capability("系统键盘", value: keyboardStatus, icon: "keyboard")
             capability("系统麦克风", value: systemMicrophonePipelineReady ? "已就绪" : "未就绪", icon: "mic")
+            capability("设备控制", value: controlStatus, icon: "lock.shield")
+            capability("Wi-Fi", value: deviceWiFiConnected ? "已连接" : "未连接", icon: "wifi")
         }
         .padding(20)
         .bridgePanel()
@@ -737,7 +756,7 @@ private struct BridgeRootView: View {
                     .background(BridgeTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("登录时自动启动").font(.headline)
-                    Text(preferences.launchAtLoginRequiresApproval ? "请在“系统设置 → 通用 → 登录项”中允许 Cardputer Bridge。" : "登录这台 Mac 后自动恢复键盘、控制通道与系统麦克风。")
+                    Text(preferences.launchAtLoginRequiresApproval ? "请在“系统设置 → 通用 → 登录项”中允许 Cardputer Bridge。" : "登录这台 Mac 后自动连接 Cardputer。")
                         .font(.caption)
                         .foregroundStyle(BridgeTheme.secondaryText)
                 }
@@ -819,7 +838,9 @@ private struct BridgeRootView: View {
     }
 
     private var firmwareVersionSummary: String {
-        let current = bluetooth.firmwareIdentity?.firmwareVersion ?? "旧版或未识别"
+        guard let current = bluetooth.firmwareIdentity?.firmwareVersion else {
+            return "连接 Cardputer 后检查更新"
+        }
         switch firmwareUpdate.phase {
         case .idle:
             return "当前 \(current) · 可检查新版本"
@@ -841,8 +862,8 @@ private struct BridgeRootView: View {
             return "Cardputer 正在下载并切换安全更新槽"
         case .complete(let version):
             return "已安装 \(version)"
-        case .failed(let message):
-            return message
+        case .failed:
+            return "暂时无法检查更新，请稍后重试"
         }
     }
 
@@ -893,12 +914,6 @@ private struct BridgeRootView: View {
                     onboardingCopy
                     onboardingState
                     onboardingActions
-                    Label(
-                        "默认静音；控制链路失联会立即停止上传声音。",
-                        systemImage: "info.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(BridgeTheme.secondaryText)
                 }
                 .frame(maxWidth: 720)
                 .padding(.horizontal, 40)
@@ -919,7 +934,7 @@ private struct BridgeRootView: View {
                 .foregroundStyle(BridgeTheme.secondaryText)
             }
 
-            Text("首次设置 · \(setupStep + 1)/6")
+            Text("第 \(setupStep + 1) 步，共 6 步")
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(BridgeTheme.secondaryText)
             Text(onboardingTitle)
@@ -994,7 +1009,7 @@ private struct BridgeRootView: View {
                 }
                 Spacer()
                 if bluetooth.state.phase == .ready {
-                    Label("加密通道就绪", systemImage: "lock.fill")
+                    Label("已连接", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(BridgeTheme.success)
                 }
             }
@@ -1017,21 +1032,13 @@ private struct BridgeRootView: View {
                 .bridgePanel()
             }
         case 4:
-            VStack(spacing: 12) {
-                systemMicrophoneStatusCard(identifier: "onboarding-system-microphone-status")
-                if case .failed(let message) = audioDriverInstaller.phase {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(BridgeTheme.accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
+            systemMicrophoneStatusCard(identifier: "onboarding-system-microphone-status")
         case 5:
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
-                onboardingResult("BLE 键盘", keyboardStatus, status: bluetooth.hidConnected)
+                onboardingResult("系统键盘", keyboardStatus, status: bluetooth.hidConnected)
                 onboardingResult("快捷键配置", configSyncText, status: bluetooth.deviceConfigVersion == shortcuts.configuration.configVersion)
-                onboardingResult("Wi-Fi 音频", audioStatus, status: audio.status == .receiving || audio.status == .listening)
-                onboardingResult("系统麦克风", systemMicrophonePipelineReady ? "已注册" : "未就绪", status: systemMicrophonePipelineReady)
+                onboardingResult("无线麦克风", audioStatus, status: audio.status == .receiving || audio.status == .listening)
+                onboardingResult("系统麦克风", systemMicrophonePipelineReady ? "可用" : "未就绪", status: systemMicrophonePipelineReady)
             }
             .padding(18)
             .bridgePanel()
@@ -1093,21 +1100,21 @@ private struct BridgeRootView: View {
         switch setupStep {
         case 0: "把 Cardputer 连接到这台 Mac"
         case 1: "找到你的 Cardputer"
-        case 2: "建立安全控制通道"
+        case 2: "连接到这台 Mac"
         case 3: "让声音进入局域网"
-        case 4: "注册系统麦克风"
-        default: "基础链路已经就绪"
+        case 4: "安装系统麦克风"
+        default: "设置完成"
         }
     }
 
     private var onboardingDetail: String {
         switch setupStep {
-        case 0: "先在 Mac 上检查并安装正式固件，然后它会成为 BLE 键盘和局域网麦克风。已安装过的设备可直接继续。"
-        case 1: "保持 Cardputer 开机；App 会发现或恢复此前绑定的设备。"
-        case 2: "控制服务只接受已加密、已认证的连接。已有 bond 会直接恢复，不会重复显示配对码。"
-        case 3: "Wi-Fi 承载实时音频；BLE 继续负责配网、静音与心跳控制。"
-        case 4: "点击一次安装随 App 附带的系统麦克风驱动；macOS 会显示标准管理员授权框。安装完成后，App 会确认 Cardputer Microphone 已发布。"
-        default: "你现在可以使用 BLE 键盘、同步 G0 快捷键，并在系统 App 中选择 Cardputer Microphone。"
+        case 0: "连接 Cardputer，完成一次设置后即可使用快捷键和无线麦克风。"
+        case 1: "打开 Cardputer，并将它放在这台 Mac 附近。"
+        case 2: "在 Mac 与 Cardputer 上确认配对；已配对设备会自动连接。"
+        case 3: "选择 Cardputer 使用的 2.4 GHz Wi-Fi 网络。"
+        case 4: "安装后，Cardputer Microphone 会出现在 Mac 的输入设备列表中。"
+        default: "Cardputer 已准备好，可以开始使用。"
         }
     }
 
@@ -1290,10 +1297,10 @@ private struct BridgeRootView: View {
             if let deviceVersion = bluetooth.deviceConfigVersion,
                deviceVersion > shortcuts.configuration.configVersion {
                 HStack(spacing: 10) {
-                    Label("设备上的配置版本较新。", systemImage: "exclamationmark.triangle.fill")
+                    Label("Cardputer 上有不同的快捷键设置。", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(BridgeTheme.warning)
                     Spacer()
-                    Button("以 Mac 配置覆盖设备") {
+                    Button("使用 Mac 上的设置") {
                         shortcuts.forceNextVersion(after: deviceVersion)
                     }
                     .buttonStyle(.bordered)
@@ -1316,18 +1323,30 @@ private struct BridgeRootView: View {
         return "有修改待同步"
     }
 
-    private var configSyncColor: Color {
-        bluetooth.deviceConfigVersion == shortcuts.configuration.configVersion
-            ? .green
-            : .orange
-    }
-
     private var shortcutConfigurationIsSynced: Bool {
         bluetooth.deviceConfigVersion == shortcuts.configuration.configVersion
     }
 
     private var currentWiFiName: String {
-        bluetooth.currentWiFiSSID ?? (wifiSSID.isEmpty ? "当前 Wi-Fi" : wifiSSID)
+        bluetooth.currentWiFiSSID ?? (wifiSSID.isEmpty ? "已连接 Wi-Fi" : wifiSSID)
+    }
+
+    private var microphoneNetworkSummary: String {
+        deviceWiFiConnected ? currentWiFiName : "等待网络"
+    }
+
+    private var microphoneOverviewDetail: String {
+        guard systemMicrophonePipelineReady else {
+            return "完成首次设置后即可使用。"
+        }
+        return bluetooth.micIntent == "live"
+            ? "声音正通过局域网进入 Mac。"
+            : "已静音。"
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+            as? String ?? "—"
     }
 
     private func provisionCurrentWiFi() {
@@ -1500,9 +1519,9 @@ private struct BridgeRootView: View {
 
     private var detail: String {
         switch bluetooth.state.phase {
-        case .ready: "安全控制通道已就绪。BLE 键盘与控制通道使用同一台设备。"
-        case .deviceFound: "已发现附近的 Cardputer，连接后由 macOS 完成安全配对。"
-        default: "App 会发现 Cardputer Bridge，并建立需要加密认证的控制通道。"
+        case .ready: "Cardputer 已准备好。"
+        case .deviceFound: "已发现附近的 Cardputer。"
+        default: "打开 Cardputer，App 会自动连接。"
         }
     }
 
@@ -1512,9 +1531,9 @@ private struct BridgeRootView: View {
         case .scanning: "正在查找"
         case .deviceFound: "已发现"
         case .connecting: "正在连接"
-        case .discoveringServices: "正在检查协议"
+        case .discoveringServices: "正在连接"
         case .authenticating: "等待安全配对"
-        case .ready: "已安全连接"
+        case .ready: "已连接"
         case .blocked: "蓝牙不可用"
         case .failed: "连接失败"
         }
@@ -1538,10 +1557,6 @@ private struct BridgeRootView: View {
         }
     }
 
-    private var deviceIcon: String {
-        bluetooth.hidConnected ? "keyboard.fill" : "keyboard"
-    }
-
     private var keyboardStatus: String {
         if bluetooth.hidConnected { return "已连接" }
         return bluetooth.state.phase == .ready ? "未就绪" : "等待连接"
@@ -1563,17 +1578,13 @@ private struct BridgeRootView: View {
             return "Cardputer 键盘和 Cardputer Microphone 均可被 macOS 应用直接使用。"
         }
         if !bluetooth.hidConnected {
-            return "BLE HID 键盘尚未就绪。"
+            return "Cardputer 键盘尚未连接。"
         }
-        return "Cardputer Microphone 尚未完成 Core Audio 枚举与音频桥接。"
+        return "Cardputer Microphone 尚未就绪。"
     }
 
     private var controlStatus: String {
-        bluetooth.state.canSendCommand ? "已认证" : "未认证"
-    }
-
-    private var micStatus: String {
-        bluetooth.micIntent == "live" ? "已开启" : "已静音"
+        bluetooth.state.canSendCommand ? "已连接" : "未连接"
     }
 
     private var audioStatus: String {
@@ -1591,8 +1602,8 @@ private struct BridgeRootView: View {
         case "bluetooth_unauthorized": "蓝牙权限被拒绝。请在“系统设置 → 隐私与安全性 → 蓝牙”中允许 Cardputer Bridge。"
         case "bluetooth_powered_off": "这台 Mac 的蓝牙已关闭。"
         case "bluetooth_unsupported": "这台 Mac 不支持所需的 Bluetooth Low Energy。"
-        case "vendor_service_missing": "发现了设备，但固件协议不匹配。请确认 Cardputer Bridge 固件版本。"
-        default: fault
+        case "vendor_service_missing": "Cardputer 固件不兼容，请检查更新。"
+        default: "无法连接 Cardputer，请重试。"
         }
     }
 }

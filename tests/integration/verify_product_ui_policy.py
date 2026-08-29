@@ -9,6 +9,25 @@ FORBIDDEN_PRODUCT_COPY = (
     "重新运行首次测试",
     "包 · 缺口",
     "v\\(deviceVersion) 已同步",
+    '"首次设置", systemImage: "circle.fill"',
+    "默认静音；控制链路失联会立即停止上传声音。",
+    "Bluetooth LE HID",
+    "约 60 ms 缓冲",
+    "以 Mac 设置为准",
+    "GATT 控制",
+    "音频会话",
+    "已有 bond",
+    "Wi-Fi 承载实时音频",
+    "Core Audio 已枚举",
+    "旧版或未识别",
+    "BLE HID 键盘",
+    "BLE 键盘",
+    "正在检查协议",
+    "建立安全控制通道",
+    "以 Mac 配置覆盖设备",
+    'default: fault',
+    'fault = error.localizedDescription',
+    '"无法扫描 Wi-Fi：\\(error.localizedDescription)"',
 )
 
 
@@ -28,6 +47,7 @@ def main() -> int:
     wifi_source = (
         macos_dir / "Sources/CardputerBridgeApp/NearbyWiFiController.swift"
     ).read_text()
+    product_source = "\n".join((app_source, wifi_source))
     icon_manifest_path = (
         macos_dir / "Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"
     )
@@ -101,7 +121,7 @@ def main() -> int:
             and "两种系统输入均已连接" not in app_source
             and "已完成系统集成" not in app_source,
         "device-newer conflict has a Mac-authoritative action":
-            "以 Mac 配置覆盖设备" in app_source
+            "使用 Mac 上的设置" in app_source
             and "forceNextVersion(after: deviceVersion)" in app_source,
         "diagnostics export is available":
             "CardputerDiagnosticsReport(" in app_source
@@ -110,6 +130,9 @@ def main() -> int:
         "single application instance":
             "NSRunningApplication.runningApplications" in app_source
             and "existing.activate" in app_source,
+        "page title renders once": app_source.count(
+            'Text(title).font(.system(size: 30, weight: .bold))'
+        ) == 1,
     }
     if icon_manifest_path.exists():
         manifest = json.loads(icon_manifest_path.read_text())
@@ -124,7 +147,7 @@ def main() -> int:
     failures.extend(
         f"internal product copy: {copy}"
         for copy in FORBIDDEN_PRODUCT_COPY
-        if copy in app_source
+        if copy in product_source
     )
     if failures:
         print("FAIL product UI policy: " + ", ".join(failures), file=sys.stderr)

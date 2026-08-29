@@ -29,17 +29,17 @@
 <body>
 <main>
   <header>
-    <div class="eyebrow">Cardputer Bridge · v@VERSION@</div>
+    <div class="eyebrow">Cardputer Bridge</div>
     <h1>三步接入你的 Cardputer</h1>
     <p>把 App 拖入“应用程序”，明确允许首次打开，再由 App 完成系统麦克风与固件设置。</p>
   </header>
   <div class="steps">
     <section><div class="number">1</div><div><h2>安装应用</h2><p>回到此磁盘窗口，将 <strong>Cardputer Bridge</strong> 拖到右侧的 <strong>Applications</strong>。复制完成后，从“应用程序”文件夹打开。</p></div></section>
-    <section class="warning"><div class="number">!</div><div><h2>如果看到“Apple 无法验证”</h2><ol><li>看到“未打开 Cardputer Bridge”和“移动到废纸篓”时，点击<strong>完成</strong>，不要移到废纸篓。</li><li>打开<strong>系统设置 → 隐私与安全性</strong>，滚动到“安全性”。</li><li>在 Cardputer Bridge 提示旁点击<strong>仍要打开</strong>，认证后再次选择“打开”。</li></ol><p style="margin-top:8px">这是未加入 Apple Developer Program 的开源 ad-hoc 版本会出现的系统提示；它不代表下载已损坏。请从项目 GitHub Release 下载并校验 SHA-256。升级时可能再次出现该提示；如果曾安装 v0.10.2 且允许后仍持续 Dock 跳动，可将新版临时命名为 <code>Cardputer Bridge v@VERSION@.app</code> 后打开，以绕开 macOS 27 Beta 留下的旧路径策略记录。</p></div></section>
+    <section class="warning"><div class="number">!</div><div><h2>如果看到“Apple 无法验证”</h2><ol><li>看到“未打开 Cardputer Bridge”和“移动到废纸篓”时，点击<strong>完成</strong>，不要移到废纸篓。</li><li>打开<strong>系统设置 → 隐私与安全性</strong>，滚动到“安全性”。</li><li>在 Cardputer Bridge 提示旁点击<strong>仍要打开</strong>，认证后再次选择“打开”。</li></ol><p style="margin-top:8px">当前版本使用 ad-hoc 签名，更新后 macOS 可能再次要求确认。请只从项目 GitHub Release 下载，并校验 SHA-256。</p></div></section>
     <section><div class="number">2</div><div><h2>安装系统麦克风</h2><p>在首次设置的“系统麦克风”步骤点击<strong>安装系统麦克风</strong>。macOS 会显示一次标准管理员授权框；成功后可在录音、会议和语音 App 中选择 <code>Cardputer Microphone</code>。</p></div></section>
-    <section><div class="number">3</div><div><h2>连接 Cardputer</h2><p>通过 USB 连接 Cardputer-ADV，按引导安装签名固件，然后完成 BLE 安全配对与 2.4 GHz Wi-Fi 配置。后续版本可直接通过 App 更新。</p></div></section>
+    <section><div class="number">3</div><div><h2>连接 Cardputer</h2><p>通过 USB 连接 Cardputer-ADV，按引导安装固件，然后完成蓝牙配对与 2.4 GHz Wi-Fi 配置。后续固件可直接通过 App 更新。</p></div></section>
   </div>
-  <footer>开源 Public Preview · Apple silicon · macOS 15+</footer>
+  <footer>Apple silicon · macOS 15+</footer>
 </main>
 </body>
 </html>
