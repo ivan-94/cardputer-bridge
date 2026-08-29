@@ -92,8 +92,35 @@ jobs:
             .release/Cardputer-Bridge-v*-macOS-arm64.dmg
             .release/Cardputer-Bridge-v*-macOS-arm64.dmg.sha256
 
+  manifest-compatibility:
+    needs: firmware
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download generated firmware manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-release-assets
+          path: .release
+      - name: Install build tools
+        run: brew install xcodegen
+      - name: Verify manifest with the production macOS trust path
+        run: |
+          cd macos
+          xcodegen generate --spec project.yml
+          CARDPUTER_RELEASE_MANIFEST_PATH="$GITHUB_WORKSPACE/.release/cardputer-bridge-release.json" \
+            xcodebuild \
+              -project CardputerBridge.xcodeproj \
+              -scheme CardputerBridge \
+              -configuration Debug \
+              -derivedDataPath "$RUNNER_TEMP/manifest-verifier" \
+              -destination 'platform=macOS,arch=arm64' \
+              CODE_SIGNING_ALLOWED=NO \
+              test \
+              -only-testing:CardputerBridgeCoreTests/FirmwareUpdateTests/testExternalProductionManifestWhenProvided
+
   publish:
-    needs: [firmware, macos]
+    needs: [firmware, macos, manifest-compatibility]
     runs-on: ubuntu-latest
     steps:
       - name: Download verified release assets

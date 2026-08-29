@@ -216,6 +216,14 @@ public struct SignedFirmwareRelease: Codable, Equatable, Sendable {
     }
 }
 
+public enum FirmwareReleaseTrust {
+    public static let productionKeys: [String: Data] = [
+        "release-2026-01": Data(
+            base64Encoded: "VDJ0X9efoO9FPiqG2n/NaZUPjxaWShlnWPvAtL/JzaA="
+        )!
+    ]
+}
+
 public extension FirmwareReleasePayload {
     func validateTrustBoundary() throws {
         guard schemaVersion == 2,
@@ -254,12 +262,27 @@ public extension FirmwareReleasePayload {
     }
 }
 
-public enum FirmwareReleaseVerificationError: Error, Equatable {
+public enum FirmwareReleaseVerificationError: LocalizedError, Equatable {
     case unsupportedAlgorithm
     case untrustedKey
     case invalidSignatureEncoding
     case invalidSignature
     case invalidPayload
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedAlgorithm:
+            "固件清单使用了不受支持的签名算法。"
+        case .untrustedKey:
+            "固件清单不是由受信任的发布密钥签名。"
+        case .invalidSignatureEncoding:
+            "固件清单的签名格式无效。"
+        case .invalidSignature:
+            "固件清单签名校验失败，已停止更新以保护设备。"
+        case .invalidPayload:
+            "固件清单内容无效，已停止更新以保护设备。"
+        }
+    }
 }
 
 public struct FirmwareOTAStartMessage: Sendable {

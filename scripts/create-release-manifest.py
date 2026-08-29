@@ -14,13 +14,15 @@ from pathlib import Path
 
 def artifact(role: str, path: Path, url: str, offset: str | None) -> dict:
     data = path.read_bytes()
-    return {
+    result = {
         "bytes": len(data),
-        "offset": offset,
         "role": role,
         "sha256": hashlib.sha256(data).hexdigest(),
         "url": url,
     }
+    if offset is not None:
+        result["offset"] = offset
+    return result
 
 
 def main() -> None:

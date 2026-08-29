@@ -264,6 +264,7 @@ class FirmwareReleaseContractTests(unittest.TestCase):
                 payload["firmware"]["ota"]["sha256"],
                 hashlib.sha256(fixtures["cardputer_bridge_firmware.bin"]).hexdigest(),
             )
+            self.assertNotIn("offset", payload["firmware"]["ota"])
 
             canonical = root / "canonical.json"
             signature = root / "signature.bin"

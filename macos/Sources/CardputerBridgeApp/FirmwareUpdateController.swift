@@ -21,12 +21,6 @@ final class FirmwareUpdateController: ObservableObject {
     private let manifestURL = URL(
         string: "https://github.com/ivan-94/cardputer-bridge/releases/latest/download/cardputer-bridge-release.json"
     )!
-    private let trustedKeys: [String: Data] = [
-        "release-2026-01": Data(
-            base64Encoded: "VDJ0X9efoO9FPiqG2n/NaZUPjxaWShlnWPvAtL/JzaA="
-        )!
-    ]
-
     func check(identity: DeviceFirmwareIdentity?) {
         guard phase != .checking else { return }
         phase = .checking
@@ -43,7 +37,9 @@ final class FirmwareUpdateController: ObservableObject {
                     SignedFirmwareRelease.self,
                     from: data
                 )
-                try signed.verify(trustedKeys: trustedKeys)
+                try signed.verify(
+                    trustedKeys: FirmwareReleaseTrust.productionKeys
+                )
                 release = signed.payload
                 let status = identity?.status ?? FirmwareDeviceStatus(
                     version: nil,

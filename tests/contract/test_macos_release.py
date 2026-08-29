@@ -76,7 +76,7 @@ class MacOSReleaseContractTests(unittest.TestCase):
 
         self.assertIn("macos:", workflow)
         self.assertIn("publish:", workflow)
-        self.assertIn("needs: [firmware, macos]", workflow)
+        self.assertIn("needs: [firmware, macos, manifest-compatibility]", workflow)
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertGreaterEqual(workflow.count("include-hidden-files: true"), 2)
         self.assertIn("actions/download-artifact@v4", workflow)
@@ -100,6 +100,13 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            cardputer_bridge_firmware.bin", workflow)
         self.assertNotIn("--keyfile ../keys/firmware-signing-rsa3072.pem\n            build/cardputer_bridge_firmware.bin", workflow)
         self.assertNotIn(".release/*", workflow)
+
+    def test_release_cross_checks_manifest_with_macos_trust_path(self) -> None:
+        workflow = (PROJECT / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("manifest-compatibility:", workflow)
+        self.assertIn("CARDPUTER_RELEASE_MANIFEST_PATH", workflow)
+        self.assertIn("testExternalProductionManifestWhenProvided", workflow)
 
     def test_release_builder_creates_verified_drag_install_dmg(self) -> None:
         script = (PROJECT / "scripts/build-macos-release.sh").read_text()
