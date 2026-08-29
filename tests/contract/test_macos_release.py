@@ -78,6 +78,7 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("publish:", workflow)
         self.assertIn("needs: [firmware, macos]", workflow)
         self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertGreaterEqual(workflow.count("include-hidden-files: true"), 2)
         self.assertIn("actions/download-artifact@v4", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("--draft", workflow)
@@ -93,6 +94,7 @@ class MacOSReleaseContractTests(unittest.TestCase):
         self.assertIn("Cardputer-Bridge-v*-macOS-arm64.zip", workflow)
         self.assertIn("Cardputer-Bridge-v*-macOS-arm64.sha256", workflow)
         self.assertIn("ad-hoc", workflow)
+        self.assertIn("--keyfile ../keys/firmware-signing-rsa3072.pem", workflow)
         self.assertNotIn(".release/*", workflow)
 
 

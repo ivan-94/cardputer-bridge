@@ -36,7 +36,7 @@ jobs:
             idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults"
             -D SDKCONFIG=sdkconfig.production build &&
             idf.py secure-verify-signature --version 2
-            --keyfile keys/firmware-signing-rsa3072.pem
+            --keyfile ../keys/firmware-signing-rsa3072.pem
             build/cardputer_bridge_firmware.bin
       - name: Create signed manifest
         run: |
@@ -58,6 +58,7 @@ jobs:
         with:
           name: firmware-release-assets
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
           path: |
             .release/cardputer-bridge-release.json
@@ -83,6 +84,7 @@ jobs:
         with:
           name: macos-release-assets
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
           path: |
             .release/Cardputer-Bridge-v*-macOS-arm64.zip
