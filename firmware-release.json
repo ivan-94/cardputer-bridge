@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "candidate": "0.9.6-recording-led",
+  "state": "flashed-verified",
+  "chip": "esp32s3",
+  "flash_size_bytes": 8388608,
+  "baud": 460800,
+  "artifacts": [
+    {
+      "offset": "0x0",
+      "path": "bootloader/bootloader.bin",
+      "bytes": 20720,
+      "sha256": "4f29ec231558eba96d3df851b2de2cff816091929ec9d190876eff1798c61313"
+    },
+    {
+      "offset": "0x10000",
+      "path": "cardputer_bridge_firmware.bin",
+      "bytes": 1525040,
+      "sha256": "867998daf71f689204969dd571fabdf40d45f89a7d361a2e1ef0531ec14cb65b"
+    },
+    {
+      "offset": "0x8000",
+      "path": "partition_table/partition-table.bin",
+      "bytes": 3072,
+      "sha256": "73c0b5c3e5fcba3a151cc70c453c93dd5f4798899e7f2f8cca76da1f32ffc501"
+    }
+  ],
+  "flash_args": {
+    "path": "flash_args",
+    "bytes": 162,
+    "sha256": "5dff2feb5c66095ea372cc03e5b7d3cbceb157ea4437dc36a11f8e38317bcf37"
+  },
+  "expected_runtime": {
+    "build_id": "cardputer-bridge-phase3",
+    "config_schema": 3,
+    "mic_intent": "muted",
+    "capture_gate": "closed"
+  },
+  "verification": {
+    "completed_at": "20260829T014010Z",
+    "evidence": "/Users/ivan/.local/share/cardputer-bridge/finalizations/20260829T013906Z/finalization.json",
+    "firmware_sha256": "867998daf71f689204969dd571fabdf40d45f89a7d361a2e1ef0531ec14cb65b",
+    "checks": {
+      "flash_verified": true,
+      "boot_hil": true,
+      "serial_control_hil": true,
+      "ble_heartbeat_hil": true,
+      "hid_q_passthrough_hil": true,
+      "config_schema_3_hil": true,
+      "fail_closed": true,
+      "wifi_audio_hil": true,
+      "macos_restart_mute_hil": true,
+      "muted_idle_restart_recovery_hil": true,
+      "device_mic_intent_authority_hil": true,
+      "recording_led_hil": true
+    }
+  }
+}

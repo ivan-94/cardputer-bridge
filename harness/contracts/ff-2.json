@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "FF-2",
+  "requirements": ["FR-001", "FR-002", "FR-003"],
+  "prerequisites": [
+    "ff0:PASS",
+    "cardputer_adv_connected",
+    "macos_bluetooth_available",
+    "explicit_bond_profile"
+  ],
+  "reset": "known_bond_profile_device_muted_and_all_keys_up",
+  "drive": [
+    "send_plain_key",
+    "send_g0_mapped_chord",
+    "send_g0_unmapped_chord",
+    "force_ble_disconnect",
+    "reconnect_hid_and_gatt"
+  ],
+  "observe": [
+    "macos_hid_consumer",
+    "swift_gatt_probe",
+    "device_input_events",
+    "device_connection_events"
+  ],
+  "assertions": [
+    "plain_key_has_balanced_down_up",
+    "mapped_chord_matches_usage_and_modifiers",
+    "unmapped_chord_emits_no_hid",
+    "disconnect_forces_all_keys_up_and_muted",
+    "hid_and_authenticated_gatt_recover_together"
+  ],
+  "red_fixture": "harness/fixtures/invalid-hid-events.ndjson",
+  "evidence_level": "E4",
+  "human_gate": ["macOS Bluetooth pairing UI", "physical Cardputer key source"],
+  "safety": [
+    "default_muted",
+    "all_keys_up_on_disconnect",
+    "no_bond_erasure_without_explicit_confirmation",
+    "no_plain_keystroke_logging",
+    "host_preflight_cannot_claim_e4"
+  ]
+}

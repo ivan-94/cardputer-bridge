@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.4.2,<5.5.0"
+  m5stack/m5unified:
+    version: "0.2.21"

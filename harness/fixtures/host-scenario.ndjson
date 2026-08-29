@@ -1,0 +1,6 @@
+{"v":1,"command":"reset","profile":"paired_no_wifi","request_id":"reset-1"}
+{"v":1,"command":"dispatch","action":"toggle_mic_intent","source":"harness","request_id":"dispatch-1"}
+{"v":1,"command":"reset","profile":"ready_muted","request_id":"reset-2"}
+{"v":1,"command":"dispatch","action":"toggle_mic_intent","source":"harness","request_id":"dispatch-2"}
+{"v":1,"command":"dispatch","action":"control_link_lost","source":"ble_control","request_id":"dispatch-3"}
+{"v":1,"command":"reset","profile":"ready_muted","request_id":"reset-3"}

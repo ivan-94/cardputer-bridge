@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "FF-1",
+  "requirements": ["FR-004", "FR-011"],
+  "prerequisites": [
+    "ff0:PASS",
+    "authenticated_fd_broker_preflight:PASS",
+    "system_change_authorized"
+  ],
+  "reset": "plugin_absent_and_consumer_stopped",
+  "drive": [
+    "install_plugin",
+    "send_counting_pulse",
+    "stop_producer",
+    "restart_consumer",
+    "reload_driver"
+  ],
+  "observe": [
+    "coreaudio_device_list",
+    "captured_pcm",
+    "shared_memory_sequence",
+    "plugin_lifecycle"
+  ],
+  "assertions": [
+    "device_is_selectable",
+    "format_is_mono_48000_float32",
+    "pulse_matches",
+    "stop_means_digital_silence",
+    "reload_recovers_muted"
+  ],
+  "red_fixture": "harness/fixtures/invalid-pcm-metrics.json",
+  "evidence_level": "E3",
+  "human_gate": ["Audio MIDI Setup visibility", "audible_result"],
+  "safety": [
+    "backup_existing_bundle",
+    "authenticated_cross_uid_ipc",
+    "idempotent_uninstall",
+    "test_ipc_isolated_from_production",
+    "no_system_change_without_consent"
+  ]
+}

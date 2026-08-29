@@ -1,0 +1,13 @@
+/artifacts/build/
+/artifacts/build-local/
+/artifacts/verification/
+/firmware/build/
+/firmware/managed_components/
+/firmware/sdkconfig
+/firmware/sdkconfig.production
+/firmware/keys/
+/macos/*.xcodeproj/
+/macos/.build/
+__pycache__/
+*.pyc
+.DS_Store

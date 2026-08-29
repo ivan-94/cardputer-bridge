@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "sample_rate": 48000,
+  "channels": 1,
+  "sample_format": "float32",
+  "duration_ms": 1000,
+  "active_peak": 0.75,
+  "tail_peak": 0.01
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cardputer-bridge.local/schemas/input-event-v1.schema.json",
+  "title": "Cardputer Bridge input observation envelope v1",
+  "type": "object",
+  "required": ["v", "event"],
+  "properties": {
+    "v": {"const": 1},
+    "event": {
+      "enum": ["ready", "error", "input_action", "hid_report", "domain_action", "shortcut_feedback", "not_mapped", "input_snapshot"]
+    },
+    "request_id": {"type": "string", "minLength": 1},
+    "usage": {"type": "integer", "minimum": 0, "maximum": 255},
+    "modifiers": {"type": "integer", "minimum": 0, "maximum": 255},
+    "trigger_usage": {"type": "integer", "minimum": 4, "maximum": 231},
+    "all_keys_up": {"type": "boolean"},
+    "g0_active": {"type": "boolean"}
+  }
+}

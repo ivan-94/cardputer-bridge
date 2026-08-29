@@ -1,0 +1,65 @@
+name: Firmware Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release contracts
+        run: ./scripts/verify-contracts.sh
+      - name: Materialize signing keys
+        env:
+          FIRMWARE_KEY: ${{ secrets.FIRMWARE_SIGNING_KEY_PEM }}
+          MANIFEST_KEY: ${{ secrets.RELEASE_MANIFEST_SIGNING_KEY_PEM }}
+        run: |
+          test -n "$FIRMWARE_KEY"
+          test -n "$MANIFEST_KEY"
+          mkdir -p firmware/keys .release
+          printf '%s\n' "$FIRMWARE_KEY" > firmware/keys/firmware-signing-rsa3072.pem
+          printf '%s\n' "$MANIFEST_KEY" > .release/release-manifest-ed25519.pem
+          chmod 600 firmware/keys/firmware-signing-rsa3072.pem .release/release-manifest-ed25519.pem
+      - name: Build signed firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.2
+          target: esp32s3
+          path: firmware
+          command: >-
+            idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults"
+            -D SDKCONFIG=sdkconfig.production build &&
+            idf.py secure-verify-signature --version 2
+            --keyfile keys/firmware-signing-rsa3072.pem
+            build/cardputer_bridge_firmware.bin
+      - name: Create signed manifest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -Fq "set(PROJECT_VER \"$version\")" firmware/CMakeLists.txt
+          published_at="$(date -u -d "@$(git show -s --format=%ct "$GITHUB_SHA")" '+%Y-%m-%dT%H:%M:%SZ')"
+          python3 scripts/create-release-manifest.py \
+            --version "$version" \
+            --build-dir firmware/build \
+            --signing-key .release/release-manifest-ed25519.pem \
+            --published-at "$published_at" \
+            --output .release/cardputer-bridge-release.json
+          cp firmware/build/cardputer_bridge_firmware.bin .release/
+          cp firmware/build/ota_data_initial.bin .release/
+          cp firmware/build/partition_table/partition-table.bin .release/
+          cp firmware/build/bootloader/bootloader.bin .release/
+      - name: Publish immutable GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            .release/cardputer-bridge-release.json
+            .release/cardputer_bridge_firmware.bin
+            .release/ota_data_initial.bin
+            .release/partition-table.bin
+            .release/bootloader.bin

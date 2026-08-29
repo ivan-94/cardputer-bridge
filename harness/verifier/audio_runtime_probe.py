@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+from typing import Any
+
+
+def verify_readiness(probe: dict[str, Any]) -> dict[str, object]:
+    errors: list[str] = []
+    if probe.get("status") not in {"listening", "receiving"}:
+        errors.append("receiver_not_ready")
+    if probe.get("system_microphone_ready") is not True:
+        errors.append("system_microphone_not_ready")
+    if probe.get("fault"):
+        errors.append("receiver_fault_present")
+    port = probe.get("listener_port")
+    if not isinstance(port, int) or not 0 < port <= 65535:
+        errors.append("listener_endpoint_missing")
+    session_id = probe.get("session_id")
+    if not isinstance(session_id, str) or len(session_id) != 16:
+        errors.append("audio_session_missing")
+    return {"valid": not errors, "errors": errors}
+
+
+def verify(probe: dict[str, Any]) -> dict[str, object]:
+    errors: list[str] = []
+    accepted = probe.get("accepted_packets")
+    missing = probe.get("missing_packets")
+    if probe.get("status") != "receiving":
+        errors.append("receiver_not_receiving")
+    if not isinstance(accepted, int) or accepted < 3:
+        errors.append("authenticated_packets_missing")
+    if probe.get("fault"):
+        errors.append("receiver_fault_present")
+    if isinstance(accepted, int) and isinstance(missing, int):
+        if missing > max(3, accepted // 10):
+            errors.append("packet_loss_unbounded")
+    else:
+        errors.append("packet_metrics_missing")
+    port = probe.get("listener_port")
+    if not isinstance(port, int) or not 0 < port <= 65535:
+        errors.append("listener_endpoint_missing")
+    session_id = probe.get("session_id")
+    if not isinstance(session_id, str) or len(session_id) != 16:
+        errors.append("audio_session_missing")
+    return {"valid": not errors, "errors": errors}
+
+
+def verify_file(path: Path, *, readiness_only: bool = False) -> dict[str, object]:
+    probe = json.loads(path.read_text(encoding="utf-8"))
+    result = verify_readiness(probe) if readiness_only else verify(probe)
+    result["probe"] = str(path)
+    result["observed"] = probe
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    readiness_only = len(arguments) == 2 and arguments[0] == "--ready"
+    if len(arguments) != 1 and not readiness_only:
+        print(
+            "usage: python3 -m harness.verifier.audio_runtime_probe "
+            "[--ready] <probe.json>",
+            file=sys.stderr,
+        )
+        return 2
+    path = Path(arguments[1] if readiness_only else arguments[0])
+    result = verify_file(path, readiness_only=readiness_only)
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0 if result["valid"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

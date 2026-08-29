@@ -1,0 +1,5 @@
+{"v":1,"event":"ready","build_id":"invalid-input","harness":true}
+{"v":1,"event":"input_action","request_id":"mapped-key-down","action":"key_down","usage":20,"modifiers":0,"at_ms":10}
+{"v":1,"event":"hid_report","request_id":"mapped-key-down","modifiers":9,"usage":20}
+{"v":1,"event":"shortcut_feedback","request_id":"mapped-key-down","trigger_usage":20,"modifiers":9,"usage":20}
+{"v":1,"event":"input_snapshot","request_id":"lying-final","all_keys_up":true,"g0_active":false}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "FF-1",
+  "requirements": ["FR-004", "FR-011"],
+  "prerequisites": ["ff0:PASS", "system_change_authorized"],
+  "reset": "plugin_absent_and_consumer_stopped",
+  "drive": ["install_plugin", "send_counting_pulse", "stop_producer"],
+  "observe": ["coreaudio_device_list", "captured_pcm", "plugin_lifecycle"],
+  "assertions": [
+    "device_is_selectable",
+    "pulse_matches",
+    "stop_means_digital_silence"
+  ],
+  "evidence_level": "E3",
+  "human_gate": ["Audio MIDI Setup visibility", "audible_result"],
+  "safety": [
+    "backup_existing_bundle",
+    "idempotent_uninstall",
+    "no_system_change_without_consent"
+  ]
+}

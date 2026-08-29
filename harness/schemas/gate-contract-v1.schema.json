@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cardputer-bridge.local/schemas/gate-contract-v1.schema.json",
+  "title": "Cardputer Bridge executable gate contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "requirements",
+    "prerequisites",
+    "reset",
+    "drive",
+    "observe",
+    "assertions",
+    "red_fixture",
+    "evidence_level",
+    "human_gate",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^(FF|PHASE)-[0-9]+$"},
+    "requirements": {"$ref": "#/$defs/nonEmptyStrings"},
+    "prerequisites": {"$ref": "#/$defs/nonEmptyStrings"},
+    "reset": {"type": "string", "minLength": 1},
+    "drive": {"$ref": "#/$defs/nonEmptyStrings"},
+    "observe": {"$ref": "#/$defs/nonEmptyStrings"},
+    "assertions": {"$ref": "#/$defs/nonEmptyStrings"},
+    "red_fixture": {"type": "string", "minLength": 1},
+    "evidence_level": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5"]},
+    "human_gate": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "safety": {"$ref": "#/$defs/nonEmptyStrings"}
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

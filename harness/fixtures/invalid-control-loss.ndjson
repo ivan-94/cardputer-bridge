@@ -1,0 +1,4 @@
+{"v":1,"event":"ready","build_id":"negative-fixture","harness":true}
+{"v":1,"event":"transition","action":"toggle_mic_intent","source":"harness","mic_intent":"live","capture_gate":"open","ble_control_authenticated":true,"wifi_audio_authenticated":true,"virtual_mic_ready":true}
+{"v":1,"event":"transition","action":"control_link_lost","source":"ble_control","mic_intent":"live","capture_gate":"open","ble_control_authenticated":false,"wifi_audio_authenticated":true,"virtual_mic_ready":true}
+{"v":1,"event":"snapshot","mic_intent":"live","capture_gate":"open","ble_control_authenticated":false}

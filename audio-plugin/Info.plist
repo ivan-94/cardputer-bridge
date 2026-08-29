@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>CardputerBridgeAudio</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.nexu.cardputerbridge.audio-driver</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Cardputer Bridge Audio</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.3.0</string>
+    <key>CFBundleVersion</key>
+    <string>3</string>
+    <key>CardputerBridgeAudioProtocolVersion</key>
+    <integer>1</integer>
+    <key>CardputerBridgeAudioFormat</key>
+    <string>f32le-mono-48000</string>
+    <key>CardputerBridgeAudioIPC</key>
+    <string>unix-scm-rights-v1</string>
+    <key>CardputerBridgeAudioPeerAuth</key>
+    <string>getpeereid-mutual-v1</string>
+    <key>CFPlugInDynamicRegistration</key>
+    <false/>
+    <key>CFPlugInFactories</key>
+    <dict>
+        <key>01CD25BF-4DE8-4C4F-BD2B-565DF24D94F8</key>
+        <string>CardputerBridgeAudioFactory</string>
+    </dict>
+    <key>CFPlugInTypes</key>
+    <dict>
+        <key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+        <array>
+            <string>01CD25BF-4DE8-4C4F-BD2B-565DF24D94F8</string>
+        </array>
+    </dict>
+</dict>
+</plist>

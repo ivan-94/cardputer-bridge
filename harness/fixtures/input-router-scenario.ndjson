@@ -1,0 +1,17 @@
+{"v":1,"command":"reset","request_id":"reset-1"}
+{"v":1,"command":"dispatch","action":"key_down","usage":20,"modifiers":0,"at_ms":10,"request_id":"plain-down"}
+{"v":1,"command":"dispatch","action":"key_up","usage":20,"at_ms":20,"request_id":"plain-up"}
+{"v":1,"command":"dispatch","action":"g0_down","at_ms":100,"request_id":"mapped-g0-down"}
+{"v":1,"command":"dispatch","action":"key_down","usage":20,"at_ms":150,"request_id":"mapped-key-down"}
+{"v":1,"command":"dispatch","action":"key_up","usage":20,"at_ms":180,"request_id":"mapped-key-up"}
+{"v":1,"command":"dispatch","action":"g0_up","at_ms":200,"request_id":"mapped-g0-up"}
+{"v":1,"command":"dispatch","action":"g0_down","at_ms":300,"request_id":"unmapped-g0-down"}
+{"v":1,"command":"dispatch","action":"key_down","usage":27,"at_ms":320,"request_id":"unmapped-key-down"}
+{"v":1,"command":"dispatch","action":"key_up","usage":27,"at_ms":330,"request_id":"unmapped-key-up"}
+{"v":1,"command":"dispatch","action":"g0_up","at_ms":340,"request_id":"unmapped-g0-up"}
+{"v":1,"command":"dispatch","action":"g0_down","at_ms":400,"request_id":"short-g0-down"}
+{"v":1,"command":"dispatch","action":"g0_up","at_ms":650,"request_id":"short-g0-up"}
+{"v":1,"command":"dispatch","action":"g0_down","at_ms":700,"request_id":"long-g0-down"}
+{"v":1,"command":"dispatch","action":"g0_up","at_ms":1600,"request_id":"long-g0-up"}
+{"v":1,"command":"dispatch","action":"key_down","usage":20,"modifiers":2,"at_ms":1700,"request_id":"disconnect-key-down"}
+{"v":1,"command":"dispatch","action":"ble_disconnected","at_ms":1710,"request_id":"disconnect"}

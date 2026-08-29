@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cardputer-bridge.local/schemas/snapshot-v1.schema.json",
+  "title": "Cardputer Bridge reset snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "event", "request_id", "profile", "mic_intent", "capture_gate", "ble_control_authenticated", "wifi_audio_authenticated", "virtual_mic_ready"],
+  "properties": {
+    "v": {"const": 1},
+    "event": {"const": "snapshot"},
+    "request_id": {"type": "string", "minLength": 1},
+    "profile": {"enum": ["paired_no_wifi", "ready_muted"]},
+    "mic_intent": {"enum": ["muted", "live"]},
+    "capture_gate": {"enum": ["closed", "open"]},
+    "ble_control_authenticated": {"type": "boolean"},
+    "wifi_audio_authenticated": {"type": "boolean"},
+    "virtual_mic_ready": {"type": "boolean"}
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cardputer-bridge.local/schemas/command-v1.schema.json",
+  "title": "Cardputer Bridge harness command v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "command", "profile", "request_id"],
+      "properties": {
+        "v": {"const": 1},
+        "command": {"const": "reset"},
+        "profile": {"enum": ["paired_no_wifi", "ready_muted"]},
+        "request_id": {"type": "string", "minLength": 1}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "command", "action", "source", "request_id"],
+      "properties": {
+        "v": {"const": 1},
+        "command": {"const": "dispatch"},
+        "action": {"enum": ["toggle_mic_intent", "control_link_lost"]},
+        "source": {"enum": ["harness", "ble_control"]},
+        "request_id": {"type": "string", "minLength": 1}
+      }
+    }
+  ]
+}
