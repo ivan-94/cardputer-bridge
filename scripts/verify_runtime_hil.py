@@ -44,6 +44,24 @@ def read_diagnostic(transport: Any, *, deadline: float, source: str) -> dict[str
     )
 
 
+def wait_for_runtime_ready(transport: Any, *, deadline: float) -> None:
+    """Wait until the command loop is alive after USB opens or resets the S3."""
+    captured: list[str] = []
+    while time.monotonic() < deadline:
+        raw_line = transport.readline()
+        if not raw_line:
+            continue
+        text = raw_line.decode("utf-8", errors="replace").strip()
+        if text:
+            captured.append(text)
+        event = decode_diagnostic(raw_line)
+        if event is not None and event.get("source") == "telemetry":
+            return
+        if '"event":"ready"' in text:
+            return
+    raise AssertionError(f"runtime_ready_timeout captured_tail={captured[-8:]}")
+
+
 def send_command(transport: Any, command: str) -> dict[str, Any]:
     transport.write((command + "\r\n").encode("utf-8"))
     # pyserial.flush() maps to tcdrain() on macOS. USB Serial/JTAG can leave
@@ -127,13 +145,20 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        with serial.Serial(
-            args.port,
-            115200,
+        transport = serial.Serial(
+            port=None,
+            baudrate=115200,
             timeout=0.1,
             write_timeout=1,
-        ) as transport:
-            time.sleep(0.4)
+        )
+        transport.port = args.port
+        transport.dtr = False
+        transport.rts = False
+        with transport:
+            wait_for_runtime_ready(
+                transport,
+                deadline=time.monotonic() + 8,
+            )
             transport.reset_input_buffer()
             if args.mode == "serial-control":
                 event = verify_serial_control(transport)

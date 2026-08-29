@@ -49,8 +49,10 @@ class FirmwareBootVerifierTests(unittest.TestCase):
 
         self.assertEqual(
             [
+                ("rts", False),
                 ("dtr", False),
                 ("rts", True),
+                ("dtr", False),
                 ("rts", False),
             ],
             transport.events,

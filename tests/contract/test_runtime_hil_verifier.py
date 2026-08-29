@@ -2,10 +2,30 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.verify_runtime_hil import decode_diagnostic, send_command
+from scripts.verify_runtime_hil import (
+    decode_diagnostic,
+    send_command,
+    wait_for_runtime_ready,
+)
 
 
 class RuntimeHILVerifierTests(unittest.TestCase):
+    def test_waits_for_telemetry_before_sending_runtime_commands(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.lines = [
+                    b"ESP-ROM:esp32s3-20210327\n",
+                    (
+                        b'{"v":1,"event":"diagnostic_state",'
+                        b'"source":"telemetry"}\n'
+                    ),
+                ]
+
+            def readline(self) -> bytes:
+                return self.lines.pop(0) if self.lines else b""
+
+        wait_for_runtime_ready(Transport(), deadline=10**12)
+
     def test_send_command_does_not_call_tcdrain_style_flush(self) -> None:
         class Transport:
             def __init__(self) -> None:

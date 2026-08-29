@@ -246,10 +246,7 @@ private struct USBFirmwarePackage: Sendable {
             espflash,
             ["list-ports", "--name-only", "--skip-update-check"]
         )
-        let ports = output
-            .split(whereSeparator: \.isNewline)
-            .map(String.init)
-            .filter { !$0.isEmpty }
+        let ports = USBSerialPortCatalog.canonicalPorts(from: output)
         guard !ports.isEmpty else { throw UpdateFailure.deviceNotFound }
         guard ports.count == 1 else { throw UpdateFailure.multipleDevices }
         return ports[0]

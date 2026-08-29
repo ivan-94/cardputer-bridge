@@ -35,7 +35,7 @@ grep -q '^CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y$' \
   "$firmware_dir/sdkconfig.production"
 grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' \
   "$firmware_dir/sdkconfig.production"
-"$idf_entry" -C "$firmware_dir" secure-verify-signature \
+"$idf_entry" -C "$firmware_dir" -B "$build_dir" secure-verify-signature \
   --version 2 \
   --keyfile "$signing_key" \
   "$build_dir/cardputer_bridge_firmware.bin"

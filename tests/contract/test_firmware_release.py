@@ -306,6 +306,15 @@ class FirmwareReleaseContractTests(unittest.TestCase):
         self.assertIn("RELEASE_MANIFEST_SIGNING_KEY_PEM", workflow)
         self.assertIn("FIRMWARE_SIGNING_KEY_PEM", workflow)
 
+    def test_production_signature_verification_uses_the_production_build_dir(self) -> None:
+        script = (PROJECT / "scripts/build-production-firmware.sh").read_text()
+
+        self.assertIn(
+            '"$idf_entry" -C "$firmware_dir" -B "$build_dir" '
+            "secure-verify-signature",
+            script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

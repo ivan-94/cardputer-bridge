@@ -103,6 +103,36 @@ final class FirmwareUpdateTests: XCTestCase {
         XCTAssertLessThanOrEqual(encoded.count, 160)
         XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("ota_start"))
     }
+
+    func testEspflashCuAndTTYAliasesResolveToOnePhysicalDevice() {
+        let output = "/dev/cu.usbmodem2101\n/dev/tty.usbmodem2101\n"
+
+        XCTAssertEqual(
+            USBSerialPortCatalog.canonicalPorts(from: output),
+            ["/dev/cu.usbmodem2101"]
+        )
+    }
+
+    func testTTYOnlyPortRemainsUsable() {
+        XCTAssertEqual(
+            USBSerialPortCatalog.canonicalPorts(from: "/dev/tty.usbmodem2101\n"),
+            ["/dev/tty.usbmodem2101"]
+        )
+    }
+
+    func testTwoPhysicalSerialDevicesRemainAmbiguous() {
+        let output = """
+        /dev/cu.usbmodem2101
+        /dev/tty.usbmodem2101
+        /dev/cu.usbmodem3101
+        /dev/tty.usbmodem3101
+        """
+
+        XCTAssertEqual(
+            USBSerialPortCatalog.canonicalPorts(from: output),
+            ["/dev/cu.usbmodem2101", "/dev/cu.usbmodem3101"]
+        )
+    }
 }
 
 private extension FirmwareReleasePayload {

@@ -360,6 +360,29 @@ public enum FirmwareUpdatePolicy {
     }
 }
 
+public enum USBSerialPortCatalog {
+    public static func canonicalPorts(from output: String) -> [String] {
+        var portsByIdentity: [String: String] = [:]
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let port = String(rawLine).trimmingCharacters(in: .whitespaces)
+            guard !port.isEmpty else { continue }
+            if port.hasPrefix("/dev/cu.") {
+                let suffix = port.dropFirst("/dev/cu.".count)
+                portsByIdentity["serial:\(suffix)"] = port
+            } else if port.hasPrefix("/dev/tty.") {
+                let suffix = port.dropFirst("/dev/tty.".count)
+                let identity = "serial:\(suffix)"
+                if portsByIdentity[identity] == nil {
+                    portsByIdentity[identity] = port
+                }
+            } else {
+                portsByIdentity["path:\(port)"] = port
+            }
+        }
+        return portsByIdentity.values.sorted()
+    }
+}
+
 private struct FirmwareVersion: Comparable {
     let components: [Int]
     let prerelease: String?

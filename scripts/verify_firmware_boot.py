@@ -23,12 +23,17 @@ def reset_usb_serial_jtag(
 ) -> None:
     """Hard-reset the app through the ESP32-S3 USB-Serial/JTAG port.
 
-    DTR selects the ROM download path, so an app boot verifier first releases
-    it. The longer RTS pulse matches esptool's USB hard-reset strategy.
+    DTR selects the ROM download path, so stabilize both control lines in the
+    idle state before pulsing reset. Without the idle delay, macOS can apply
+    the initial DTR state and the RTS edge together and leave the S3 waiting in
+    the ROM downloader instead of booting the application.
     """
+    transport.rts = False
     transport.dtr = False
+    settle(0.1)
     transport.rts = True
     settle(0.2)
+    transport.dtr = False
     transport.rts = False
     settle(0.2)
 
