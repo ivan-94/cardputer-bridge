@@ -1,9 +1,17 @@
 import CardputerBridgeCore
 import CryptoKit
+import Darwin
 import Foundation
 
 @MainActor
 final class FirmwareUpdateController: ObservableObject {
+    enum USBReadiness: Equatable {
+        case idle
+        case checking
+        case ready(USBFlashTarget)
+        case unavailable(message: String)
+    }
+
     enum Phase: Equatable {
         case idle
         case checking
@@ -17,12 +25,75 @@ final class FirmwareUpdateController: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var release: FirmwareReleasePayload?
+    @Published private(set) var usbReadiness: USBReadiness = .idle
+
+    private var lastProbedPorts: [String] = []
 
     private let manifestURL = URL(
         string: "https://github.com/ivan-94/cardputer-bridge/releases/latest/download/cardputer-bridge-release.json"
     )!
+
+    var isUSBReady: Bool {
+        if case .ready = usbReadiness { return true }
+        return false
+    }
+
+    func refreshUSBReadiness(force: Bool = false) {
+        guard usbReadiness != .checking else { return }
+        let ports = localUSBSerialPorts()
+
+        if case .ready(let target) = usbReadiness,
+           ports.contains(target.port) {
+            return
+        }
+        if ports.isEmpty {
+            lastProbedPorts = []
+            usbReadiness = .unavailable(
+                message: "请连接 Cardputer，并确认使用的是可传输数据的 USB-C 线。"
+            )
+            return
+        }
+        if !force, ports == lastProbedPorts { return }
+
+        lastProbedPorts = ports
+        usbReadiness = .checking
+        Task {
+            do {
+                guard ports.count == 1 else {
+                    throw UpdateFailure.multipleDevices
+                }
+                let espflash = try await EspflashTool.prepare()
+                let port = ports[0]
+                let output = try await Task.detached(priority: .userInitiated) {
+                    try run(
+                        espflash,
+                        [
+                            "board-info",
+                            "--chip", "esp32s3",
+                            "--port", port,
+                            "--non-interactive",
+                            "--skip-update-check",
+                            "--before", "usb-reset",
+                            "--after", "hard-reset",
+                        ]
+                    )
+                }.value
+                guard let target = USBFlashTargetProbe.validatedTarget(
+                    port: port,
+                    boardInfo: output
+                ) else {
+                    throw UpdateFailure.unsupportedUSBTarget
+                }
+                usbReadiness = .ready(target)
+            } catch {
+                usbReadiness = .unavailable(message: usbMessage(for: error))
+            }
+        }
+    }
+
     func check(identity: DeviceFirmwareIdentity?) {
         guard phase != .checking else { return }
+        release = nil
         phase = .checking
         Task {
             do {
@@ -100,7 +171,7 @@ final class FirmwareUpdateController: ObservableObject {
             do {
                 let package = try await USBFirmwarePackage.prepare(release)
                 phase = .flashing(progress: 0)
-                try await Task.detached(priority: .userInitiated) {
+                try await Task.detached(priority: .userInitiated) { [self] in
                     try await package.install { [weak self] progress in
                         Task { @MainActor in
                             self?.phase = .flashing(progress: progress)
@@ -122,6 +193,10 @@ final class FirmwareUpdateController: ObservableObject {
             "没有发现 Cardputer USB 设备。连接数据线后重试；若仍未发现，请按住 G0 再重新上电。"
         case UpdateFailure.multipleDevices:
             "检测到多台可烧录设备。请只保留一台 Cardputer 后重试。"
+        case UpdateFailure.unsupportedUSBTarget:
+            "USB 设备已连接，但无法确认它是可烧写的 Cardputer-ADV。"
+        case UpdateFailure.bootVerificationFailed:
+            "固件已写入，但未确认 Cardputer Bridge 成功启动。请保持 USB 连接并重试。"
         case UpdateFailure.helperIntegrity:
             "烧录工具未通过完整性校验，已停止安装。"
         case UpdateFailure.artifactIntegrity:
@@ -132,6 +207,19 @@ final class FirmwareUpdateController: ObservableObject {
             "更新失败：\(error.localizedDescription)"
         }
     }
+
+    private func usbMessage(for error: Error) -> String {
+        switch error {
+        case UpdateFailure.multipleDevices:
+            "检测到多台 USB 串口设备。请只保留一台 Cardputer。"
+        case UpdateFailure.unsupportedUSBTarget:
+            "已找到 USB 设备，但未识别为可烧写的 Cardputer-ADV。"
+        case UpdateFailure.helperIntegrity:
+            "无法安全准备 USB 检测工具，请检查网络后重试。"
+        default:
+            "无法与 Cardputer 握手。请更换数据线或 USB 接口后重试。"
+        }
+    }
 }
 
 private enum UpdateFailure: Error {
@@ -140,6 +228,8 @@ private enum UpdateFailure: Error {
     case multipleDevices
     case helperIntegrity
     case artifactIntegrity
+    case unsupportedUSBTarget
+    case bootVerificationFailed
     case flashFailed(String)
 }
 
@@ -183,24 +273,7 @@ private struct USBFirmwarePackage: Sendable {
     func install(
         progress: @escaping @Sendable (Int) -> Void
     ) async throws {
-        var port = try discoverSinglePort()
-
-        // Existing Cardputer Bridge firmware understands this command and can
-        // enter ROM download mode without asking the user to hold G0. Unknown
-        // or blank devices simply ignore the best-effort write.
-        if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: port)) {
-            try? handle.write(contentsOf: Data("reboot bootloader\n".utf8))
-            try? handle.close()
-            // USB Serial/JTAG normally re-enumerates at the same path, but do
-            // not assume that: wait for the one unambiguous device again.
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(250))
-                if let rediscovered = try? discoverSinglePort() {
-                    port = rediscovered
-                    break
-                }
-            }
-        }
+        var port = try discoverSinglePort(using: espflash)
 
         // Write the future factory image first and the bootloader last. A power
         // loss at any earlier point leaves the previously bootable loader in
@@ -235,17 +308,16 @@ private struct USBFirmwarePackage: Sendable {
             }
             progress((index + 1) * 100 / steps.count)
         }
-    }
 
-    private func discoverSinglePort() throws -> String {
-        let output = try run(
-            espflash,
-            ["list-ports", "--name-only", "--skip-update-check"]
-        )
-        let ports = USBSerialPortCatalog.canonicalPorts(from: output)
-        guard !ports.isEmpty else { throw UpdateFailure.deviceNotFound }
-        guard ports.count == 1 else { throw UpdateFailure.multipleDevices }
-        return ports[0]
+        for _ in 0..<30 {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let rediscovered = try? discoverSinglePort(using: espflash) else {
+                continue
+            }
+            port = rediscovered
+            if firmwareIsRunning(at: port) { return }
+        }
+        throw UpdateFailure.bootVerificationFailed
     }
 
     fileprivate static func applicationSupportRoot() throws -> URL {
@@ -265,6 +337,56 @@ private struct USBFirmwarePackage: Sendable {
         )
         return root
     }
+}
+
+private func localUSBSerialPorts() -> [String] {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []
+    let paths = names.compactMap { name -> String? in
+        guard name.hasPrefix("cu.usbmodem") || name.hasPrefix("cu.usbserial") else {
+            return nil
+        }
+        return "/dev/\(name)"
+    }
+    return USBSerialPortCatalog.canonicalPorts(from: paths.joined(separator: "\n"))
+}
+
+private func discoverSinglePort(using espflash: URL) throws -> String {
+    let output = try run(
+        espflash,
+        ["list-ports", "--name-only", "--skip-update-check"]
+    )
+    let ports = USBSerialPortCatalog.canonicalPorts(from: output)
+    guard !ports.isEmpty else { throw UpdateFailure.deviceNotFound }
+    guard ports.count == 1 else { throw UpdateFailure.multipleDevices }
+    return ports[0]
+}
+
+private func firmwareIsRunning(at port: String) -> Bool {
+    let descriptor = Darwin.open(port, O_RDWR | O_NOCTTY | O_NONBLOCK)
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+
+    let request = Array("status\n".utf8)
+    _ = request.withUnsafeBytes { bytes in
+        Darwin.write(descriptor, bytes.baseAddress, bytes.count)
+    }
+
+    var received = Data()
+    let deadline = Date().addingTimeInterval(1.5)
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while Date() < deadline {
+        let count = Darwin.read(descriptor, &buffer, buffer.count)
+        if count > 0 {
+            received.append(buffer, count: count)
+            if FirmwareBootEvidence.confirmsRunningFirmware(
+                String(decoding: received, as: UTF8.self)
+            ) {
+                return true
+            }
+        }
+        usleep(50_000)
+    }
+    return false
 }
 
 private enum EspflashTool {

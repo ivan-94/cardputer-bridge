@@ -173,6 +173,65 @@ final class FirmwareUpdateTests: XCTestCase {
             ["/dev/cu.usbmodem2101", "/dev/cu.usbmodem3101"]
         )
     }
+
+    func testBoardInfoConfirmsFlashableCardputerTarget() throws {
+        let output = """
+        Chip type:         esp32s3 (revision v0.2)
+        Crystal frequency: 40 MHz
+        Flash size:        8MB
+        Features:          WiFi, BLE, Embedded Flash
+        """
+
+        XCTAssertEqual(
+            USBFlashTargetProbe.validatedTarget(
+                port: "/dev/cu.usbmodem2101",
+                boardInfo: output
+            ),
+            USBFlashTarget(
+                port: "/dev/cu.usbmodem2101",
+                chip: "esp32s3",
+                flashSizeMegabytes: 8
+            )
+        )
+    }
+
+    func testBoardInfoRejectsWrongChipAndUndersizedFlash() {
+        XCTAssertNil(
+            USBFlashTargetProbe.validatedTarget(
+                port: "/dev/cu.usbserial1",
+                boardInfo: "Chip type: esp32c3\nFlash size: 8MB"
+            )
+        )
+        XCTAssertNil(
+            USBFlashTargetProbe.validatedTarget(
+                port: "/dev/cu.usbmodem1",
+                boardInfo: "Chip type: esp32s3\nFlash size: 4MB"
+            )
+        )
+    }
+
+    func testBootEvidenceRequiresCardputerReadyOrSerialDiagnostic() {
+        XCTAssertTrue(
+            FirmwareBootEvidence.confirmsRunningFirmware(
+                #"{"v":1,"event":"ready","board":"Cardputer-ADV","keyboard_ready":true}"#
+            )
+        )
+        XCTAssertTrue(
+            FirmwareBootEvidence.confirmsRunningFirmware(
+                #"{"v":1,"event":"ready","board":"CardputerADV","keyboard_ready":true}"#
+            )
+        )
+        XCTAssertTrue(
+            FirmwareBootEvidence.confirmsRunningFirmware(
+                #"{"v":1,"event":"diagnostic_state","source":"serial"}"#
+            )
+        )
+        XCTAssertFalse(
+            FirmwareBootEvidence.confirmsRunningFirmware(
+                #"{"v":1,"event":"ready","board":"other","keyboard_ready":true}"#
+            )
+        )
+    }
 }
 
 private extension FirmwareUpdateTests {

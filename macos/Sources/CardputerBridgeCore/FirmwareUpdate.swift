@@ -406,6 +406,93 @@ public enum USBSerialPortCatalog {
     }
 }
 
+public struct USBFlashTarget: Equatable, Sendable {
+    public let port: String
+    public let chip: String
+    public let flashSizeMegabytes: Int
+
+    public init(port: String, chip: String, flashSizeMegabytes: Int) {
+        self.port = port
+        self.chip = chip
+        self.flashSizeMegabytes = flashSizeMegabytes
+    }
+}
+
+public enum USBFlashTargetProbe {
+    public static func validatedTarget(
+        port: String,
+        boardInfo: String
+    ) -> USBFlashTarget? {
+        guard let chip = value(after: "Chip type:", in: boardInfo)?
+            .split(separator: " ", maxSplits: 1)
+            .first
+            .map(String.init),
+              chip.lowercased() == "esp32s3",
+              let flashValue = value(after: "Flash size:", in: boardInfo),
+              let flashSize = parseMegabytes(flashValue),
+              flashSize >= 8 else {
+            return nil
+        }
+        return USBFlashTarget(
+            port: port,
+            chip: chip,
+            flashSizeMegabytes: flashSize
+        )
+    }
+
+    private static func value(after prefix: String, in output: String) -> String? {
+        output.split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .first { $0.hasPrefix(prefix) }
+            .map {
+                String($0.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespaces)
+            }
+    }
+
+    private static func parseMegabytes(_ value: String) -> Int? {
+        let normalized = value.uppercased()
+        guard let range = normalized.range(of: "MB"),
+              let megabytes = Int(
+                normalized[..<range.lowerBound]
+                    .trimmingCharacters(in: .whitespaces)
+              ) else { return nil }
+        return megabytes
+    }
+}
+
+public enum FirmwareBootEvidence {
+    public static func confirmsRunningFirmware(_ output: String) -> Bool {
+        output.split(whereSeparator: \.isNewline).contains { rawLine in
+            guard let data = String(rawLine).data(using: .utf8),
+                  let envelope = try? JSONDecoder().decode(
+                    BootEnvelope.self,
+                    from: data
+                  ) else { return false }
+            if envelope.event == "ready" {
+                return ["Cardputer-ADV", "CardputerADV"].contains(envelope.board) &&
+                    envelope.keyboardReady == true
+            }
+            return envelope.event == "diagnostic_state" &&
+                envelope.source == "serial"
+        }
+    }
+
+    private struct BootEnvelope: Decodable {
+        let event: String
+        let board: String?
+        let source: String?
+        let keyboardReady: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case event
+            case board
+            case source
+            case keyboardReady = "keyboard_ready"
+        }
+    }
+}
+
 private struct FirmwareVersion: Comparable {
     let components: [Int]
     let prerelease: String?

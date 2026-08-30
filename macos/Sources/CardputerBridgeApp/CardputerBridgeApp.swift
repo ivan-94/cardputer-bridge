@@ -252,6 +252,18 @@ private struct BridgeRootView: View {
                 syncShortcutConfigurationIfNeeded()
             }
         }
+        .task(id: setupStep) {
+            guard !setupCompleted else { return }
+            if setupStep == 0 {
+                firmwareUpdate.refreshUSBReadiness()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    firmwareUpdate.refreshUSBReadiness()
+                }
+            } else if setupStep == 1, firmwareUpdate.phase == .idle {
+                firmwareUpdate.check(identity: nil)
+            }
+        }
         .onChange(of: bluetooth.deviceStateJSON) {
             if !recoverAudioSessionAfterDeviceRestartIfNeeded() {
                 offerAudioToAlreadyConnectedDeviceIfNeeded()
@@ -826,11 +838,20 @@ private struct BridgeRootView: View {
                         .foregroundStyle(BridgeTheme.secondaryText)
                 }
                 Spacer()
-                firmwareUpdateAction
+                if shouldShowFirmwareUpdateAction {
+                    firmwareUpdateAction
+                }
             }
             if let progress = firmwareProgress {
                 ProgressView(value: Double(progress), total: 100)
                     .tint(BridgeTheme.accent)
+            }
+            if case .failed(let message) = firmwareUpdate.phase {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("firmware-install-error")
             }
         }
         .padding(18)
@@ -838,18 +859,18 @@ private struct BridgeRootView: View {
     }
 
     private var firmwareVersionSummary: String {
-        guard let current = bluetooth.firmwareIdentity?.firmwareVersion else {
-            return "连接 Cardputer 后检查更新"
-        }
+        let current = bluetooth.firmwareIdentity?.firmwareVersion
         switch firmwareUpdate.phase {
         case .idle:
-            return "当前 \(current) · 可检查新版本"
+            return current.map { "当前 \($0) · 可检查新版本" }
+                ?? "连接 Cardputer 后检查更新"
         case .checking:
             return "正在验证发布清单…"
         case .available(.upToDate):
-            return "当前 \(current) · 已是最新版本"
+            return "当前 \(current ?? "未知") · 已是最新版本"
         case .available(.usbMigrationRequired(let target)):
-            return "当前 \(current) · 首次升级到 \(target) 需要 USB"
+            return current.map { "当前 \($0) · 首次升级到 \(target) 需要 USB" }
+                ?? "正式固件 \(target) 已通过校验"
         case .available(.otaAvailable(_, let target)):
             return "发现 \(target) · 可通过 Wi-Fi 安装"
         case .available(.incompatible(let reason)):
@@ -861,22 +882,39 @@ private struct BridgeRootView: View {
         case .ota:
             return "Cardputer 正在下载并切换安全更新槽"
         case .complete(let version):
-            return "已安装 \(version)"
+            return "已安装 \(version) · Cardputer 已成功启动"
         case .failed:
-            return "暂时无法检查更新，请稍后重试"
+            return "固件安装失败"
         }
+    }
+
+    private var shouldShowFirmwareUpdateAction: Bool {
+        if setupStep == 1, case .complete = firmwareUpdate.phase {
+            return false
+        }
+        return true
     }
 
     @ViewBuilder
     private var firmwareUpdateAction: some View {
         switch firmwareUpdate.phase {
-        case .idle, .failed:
+        case .idle:
             Button("检查更新") {
                 firmwareUpdate.check(identity: bluetooth.firmwareIdentity)
             }
             .buttonStyle(.borderedProminent)
+        case .failed where setupStep == 1 && firmwareUpdate.release != nil:
+            Button("重新刷入") {
+                firmwareUpdate.installOverUSB()
+            }
+            .buttonStyle(.borderedProminent)
+        case .failed:
+            Button("重新检查") {
+                firmwareUpdate.check(identity: bluetooth.firmwareIdentity)
+            }
+            .buttonStyle(.borderedProminent)
         case .available(.usbMigrationRequired):
-            Button("通过 USB 安装") {
+            Button(setupStep == 1 ? "刷入固件" : "通过 USB 安装") {
                 firmwareUpdate.installOverUSB()
             }
             .buttonStyle(.borderedProminent)
@@ -958,19 +996,25 @@ private struct BridgeRootView: View {
     private var onboardingIllustration: some View {
         switch setupStep {
         case 0:
-            HStack(spacing: 34) {
+            HStack(spacing: 30) {
                 CardputerProductImage()
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(BridgeTheme.accent)
-                VStack(spacing: 12) {
-                    onboardingCapability("系统键盘", icon: "command")
-                    onboardingCapability("Wi-Fi 麦克风", icon: "mic")
+                VStack(spacing: 8) {
+                    Image(systemName: "cable.connector")
+                        .font(.system(size: 28, weight: .medium))
+                    Text("USB")
+                        .font(.caption.monospaced().weight(.semibold))
+                        .foregroundStyle(BridgeTheme.secondaryText)
                 }
+                .foregroundStyle(BridgeTheme.accent)
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 68, weight: .light))
+                    .foregroundStyle(BridgeTheme.primaryText)
             }
-            .padding(24)
+            .frame(maxWidth: .infinity)
+            .padding(26)
             .bridgePanel()
         case 1:
-            onboardingSymbol("antenna.radiowaves.left.and.right")
+            onboardingSymbol("arrow.down.to.line.compact")
         case 2:
             onboardingSymbol("lock.shield")
         case 3:
@@ -998,8 +1042,10 @@ private struct BridgeRootView: View {
     private var onboardingState: some View {
         switch setupStep {
         case 0:
+            usbReadinessCard
+        case 1:
             firmwareUpdateCard
-        case 1, 2:
+        case 2:
             HStack(spacing: 12) {
                 Image(systemName: statusIcon).foregroundStyle(statusColor)
                 VStack(alignment: .leading, spacing: 3) {
@@ -1049,7 +1095,29 @@ private struct BridgeRootView: View {
 
     @ViewBuilder
     private var onboardingActions: some View {
-        if setupStep == 1 && bluetooth.state.phase != .ready {
+        if setupStep == 0 {
+            switch firmwareUpdate.usbReadiness {
+            case .ready:
+                Button("继续") { setupStep = 1 }
+                    .buttonStyle(BridgePrimaryButtonStyle())
+                    .accessibilityIdentifier("onboarding-usb-continue")
+            case .checking:
+                Button("正在检测…") {}
+                    .buttonStyle(BridgePrimaryButtonStyle())
+                    .disabled(true)
+            case .idle, .unavailable:
+                Button("重新检测") {
+                    firmwareUpdate.refreshUSBReadiness(force: true)
+                }
+                .buttonStyle(BridgePrimaryButtonStyle())
+            }
+        } else if setupStep == 1 {
+            if case .complete = firmwareUpdate.phase {
+                Button("继续") { setupStep = 2 }
+                    .buttonStyle(BridgePrimaryButtonStyle())
+                    .accessibilityIdentifier("onboarding-firmware-continue")
+            }
+        } else if setupStep == 2 && bluetooth.state.phase != .ready {
             actionButton
         } else if setupStep == 3 && !deviceWiFiConnected {
             Button("连接并继续") {
@@ -1079,7 +1147,7 @@ private struct BridgeRootView: View {
             Button("进入 Cardputer Bridge") { setupCompleted = true }
                 .buttonStyle(BridgePrimaryButtonStyle())
         } else {
-            Button(setupStep == 0 ? "开始设置" : "继续") {
+            Button("继续") {
                 setupStep = min(5, setupStep + 1)
             }
             .buttonStyle(BridgePrimaryButtonStyle())
@@ -1093,13 +1161,13 @@ private struct BridgeRootView: View {
     }
 
     private var onboardingTitle: String {
-        ["欢迎", "发现设备", "安全配对", "接入 Wi-Fi", "系统麦克风", "完成"][setupStep]
+        ["USB 连接", "安装固件", "连接 Mac", "接入 Wi-Fi", "系统麦克风", "完成"][setupStep]
     }
 
     private var onboardingHeadline: String {
         switch setupStep {
-        case 0: "把 Cardputer 连接到这台 Mac"
-        case 1: "找到你的 Cardputer"
+        case 0: "用 USB 连接 Cardputer"
+        case 1: "安装 Cardputer Bridge 固件"
         case 2: "连接到这台 Mac"
         case 3: "让声音进入局域网"
         case 4: "安装系统麦克风"
@@ -1109,21 +1177,81 @@ private struct BridgeRootView: View {
 
     private var onboardingDetail: String {
         switch setupStep {
-        case 0: "连接 Cardputer，完成一次设置后即可使用快捷键和无线麦克风。"
-        case 1: "打开 Cardputer，并将它放在这台 Mac 附近。"
-        case 2: "在 Mac 与 Cardputer 上确认配对；已配对设备会自动连接。"
+        case 0: "请使用可传输数据的 USB-C 线。只有确认设备可烧写后才能继续。"
+        case 1: "Mac 会下载并校验正式固件，通过 USB 写入后等待它成功启动。"
+        case 2: "通过蓝牙发现 Cardputer，并在 macOS 系统窗口中完成安全配对。"
         case 3: "选择 Cardputer 使用的 2.4 GHz Wi-Fi 网络。"
         case 4: "安装后，Cardputer Microphone 会出现在 Mac 的输入设备列表中。"
         default: "Cardputer 已准备好，可以开始使用。"
         }
     }
 
-    private func onboardingCapability(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon)
-            .font(.headline)
-            .frame(width: 170, height: 56)
-            .background(BridgeTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(BridgeTheme.border))
+    private var usbReadinessCard: some View {
+        HStack(spacing: 14) {
+            Image(systemName: usbReadinessIcon)
+                .font(.title2)
+                .foregroundStyle(usbReadinessColor)
+                .frame(width: 42, height: 42)
+                .background(
+                    usbReadinessColor.opacity(0.1),
+                    in: RoundedRectangle(cornerRadius: 11)
+                )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(usbReadinessTitle).font(.headline)
+                Text(usbReadinessDetail)
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+            }
+            Spacer()
+            if case .checking = firmwareUpdate.usbReadiness {
+                ProgressView().controlSize(.small)
+            } else if firmwareUpdate.isUSBReady {
+                Label("可以烧写", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BridgeTheme.success)
+            }
+        }
+        .padding(18)
+        .bridgePanel(
+            border: firmwareUpdate.isUSBReady
+                ? BridgeTheme.success.opacity(0.3)
+                : BridgeTheme.border
+        )
+        .accessibilityIdentifier("onboarding-usb-readiness")
+    }
+
+    private var usbReadinessTitle: String {
+        switch firmwareUpdate.usbReadiness {
+        case .idle: "等待 Cardputer"
+        case .checking: "正在确认设备"
+        case .ready: "Cardputer-ADV 已连接"
+        case .unavailable: "未找到可烧写的 Cardputer"
+        }
+    }
+
+    private var usbReadinessDetail: String {
+        switch firmwareUpdate.usbReadiness {
+        case .idle:
+            return "连接 USB 后会自动检测。"
+        case .checking:
+            return "正在识别芯片与 Flash，屏幕可能会短暂重启。"
+        case .ready(let target):
+            return "\(target.chip.uppercased()) · \(target.flashSizeMegabytes) MB Flash · USB 通信正常"
+        case .unavailable(let message):
+            return message
+        }
+    }
+
+    private var usbReadinessIcon: String {
+        switch firmwareUpdate.usbReadiness {
+        case .idle, .unavailable: "cable.connector"
+        case .checking: "ellipsis"
+        case .ready: "checkmark"
+        }
+    }
+
+    private var usbReadinessColor: Color {
+        firmwareUpdate.isUSBReady ? BridgeTheme.success : BridgeTheme.accent
     }
 
     private func onboardingSymbol(_ name: String) -> some View {
@@ -2343,14 +2471,18 @@ private extension View {
 }
 
 private struct BridgePrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(isEnabled ? .white : BridgeTheme.secondaryText)
             .padding(.horizontal, 32)
             .frame(minWidth: 220, minHeight: 44)
             .background(
-                configuration.isPressed
+                !isEnabled
+                    ? BridgeTheme.surfaceRaised
+                    : configuration.isPressed
                     ? BridgeTheme.accent.opacity(0.75)
                     : BridgeTheme.accent,
                 in: RoundedRectangle(cornerRadius: 12)
@@ -2359,7 +2491,10 @@ private struct BridgePrimaryButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.white.opacity(0.12))
             )
-            .shadow(color: BridgeTheme.accent.opacity(0.2), radius: 12)
+            .shadow(
+                color: isEnabled ? BridgeTheme.accent.opacity(0.2) : .clear,
+                radius: 12
+            )
     }
 }
 

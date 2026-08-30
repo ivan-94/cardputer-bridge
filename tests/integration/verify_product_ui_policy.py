@@ -47,6 +47,9 @@ def main() -> int:
     wifi_source = (
         macos_dir / "Sources/CardputerBridgeApp/NearbyWiFiController.swift"
     ).read_text()
+    firmware_update_source = (
+        macos_dir / "Sources/CardputerBridgeApp/FirmwareUpdateController.swift"
+    ).read_text()
     product_source = "\n".join((app_source, wifi_source))
     icon_manifest_path = (
         macos_dir / "Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"
@@ -130,6 +133,22 @@ def main() -> int:
         "single application instance":
             "NSRunningApplication.runningApplications" in app_source
             and "existing.activate" in app_source,
+        "first-use flow gates USB before firmware and pairing":
+            '["USB 连接", "安装固件", "连接 Mac", "接入 Wi-Fi", "系统麦克风", "完成"]'
+            in app_source
+            and "onboarding-usb-readiness" in app_source
+            and "onboarding-usb-continue" in app_source
+            and "case .ready:" in app_source
+            and "Button(\"继续\") { setupStep = 1 }" in app_source,
+        "USB gate validates a flash-capable Cardputer":
+            "USBFlashTargetProbe.validatedTarget" in firmware_update_source
+            and "board-info" in firmware_update_source
+            and "--chip" in firmware_update_source
+            and "esp32s3" in firmware_update_source,
+        "firmware install verifies application boot":
+            "FirmwareBootEvidence.confirmsRunningFirmware" in firmware_update_source
+            and 'Array("status\\n".utf8)' in firmware_update_source
+            and '"reboot bootloader\\n"' not in firmware_update_source,
         "page title renders once": app_source.count(
             'Text(title).font(.system(size: 30, weight: .bold))'
         ) == 1,
