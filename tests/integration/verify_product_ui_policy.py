@@ -107,6 +107,19 @@ def main() -> int:
         "2.4 GHz Wi-Fi scan": "scanForNetworks" in wifi_source
         and "channel.channelNumber <= 14" in wifi_source
         and "选择附近网络" in app_source,
+        "onboarding Wi-Fi uses discovery and a selectable menu":
+            "onboardingWiFiSetupCard" in app_source
+            and "onboarding-wifi-menu" in app_source
+            and "onboarding-wifi-rescan" in app_source
+            and "ForEach(nearbyWiFi.networks)" in app_source
+            and 'Button("其他网络…")' in app_source
+            and "setupStep == 3, nearbyWiFi.networks.isEmpty" in app_source,
+        "onboarding Wi-Fi reports progress and failure":
+            "WiFiProvisioningPhase" in app_source
+            and 'Text("正在连接…")' in app_source
+            and 'Text("重试连接")' in app_source
+            and "连接超时，请检查 Wi-Fi 密码和信号后重试。" in app_source
+            and "wifiProvisioningIsConnecting" in app_source,
         "Wi-Fi scan privacy copy": "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription" in project,
         "shortcut page has no redundant explainer card":
             "Cardputer 是你的辅助快捷键盘" not in app_source,

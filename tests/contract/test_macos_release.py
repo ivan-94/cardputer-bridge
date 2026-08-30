@@ -129,6 +129,9 @@ class MacOSReleaseContractTests(unittest.TestCase):
 
     def test_release_app_embeds_audio_driver_installer(self) -> None:
         script = (PROJECT / "scripts/build-macos-release.sh").read_text()
+        embed_script = (PROJECT / "scripts/embed-audio-installer.sh").read_text()
+        debug_build = (PROJECT / "scripts/build-macos.sh").read_text()
+        debug_verify = (PROJECT / "scripts/verify-macos.sh").read_text()
         installer = (
             PROJECT
             / "packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh"
@@ -138,13 +141,16 @@ class MacOSReleaseContractTests(unittest.TestCase):
         )
 
         self.assertTrue(controller.is_file())
-        self.assertIn("AudioInstaller", script)
-        self.assertIn("CardputerBridgeAudio.driver.zip", script)
+        self.assertIn("embed-audio-installer.sh", script)
+        self.assertIn("embed-audio-installer.sh", debug_build)
+        self.assertIn("embed-audio-installer.sh", debug_verify)
+        self.assertIn("AudioInstaller", embed_script)
+        self.assertIn("CardputerBridgeAudio.driver.zip", embed_script)
         self.assertNotIn(
             'ditto "$driver" "$audio_installer_resources/Audio/CardputerBridgeAudio.driver"',
-            script,
+            embed_script,
         )
-        self.assertIn("install-bundled-audio-driver.sh", script)
+        self.assertIn("install-bundled-audio-driver.sh", embed_script)
         self.assertIn("CardputerBridgeAudio.driver.zip", installer)
         self.assertIn("ditto -x -k", installer)
         self.assertIn("with administrator privileges", controller.read_text())

@@ -202,6 +202,12 @@ final class AppPreferencesController: ObservableObject {
 }
 
 private struct BridgeRootView: View {
+    private enum WiFiProvisioningPhase: Equatable {
+        case idle
+        case connecting(ssid: String)
+        case failed(message: String)
+    }
+
     @EnvironmentObject private var bluetooth: BLEBridgeController
     @EnvironmentObject private var audio: AudioReceiverController
     @EnvironmentObject private var shortcuts: ShortcutConfigController
@@ -211,6 +217,8 @@ private struct BridgeRootView: View {
     @AppStorage("cardputerBridge.lastWiFiSSID") private var wifiSSID = ""
     @State private var wifiPassword = ""
     @State private var isEditingWiFi = false
+    @State private var isEnteringHiddenWiFi = false
+    @State private var wifiProvisioningPhase: WiFiProvisioningPhase = .idle
     @State private var lastOfferedSessionID: UInt64?
     @State private var lastAudioOfferAttemptAt = Date.distantPast
     @State private var lastConfigSyncAttemptAt = Date.distantPast
@@ -262,12 +270,25 @@ private struct BridgeRootView: View {
                 }
             } else if setupStep == 1, firmwareUpdate.phase == .idle {
                 firmwareUpdate.check(identity: nil)
+            } else if setupStep == 3, nearbyWiFi.networks.isEmpty {
+                nearbyWiFi.scan()
             }
         }
         .onChange(of: bluetooth.deviceStateJSON) {
+            if deviceWiFiConnected {
+                wifiProvisioningPhase = .idle
+            }
             if !recoverAudioSessionAfterDeviceRestartIfNeeded() {
                 offerAudioToAlreadyConnectedDeviceIfNeeded()
             }
+        }
+        .onChange(of: bluetooth.commandFault) {
+            guard setupStep == 3,
+                  bluetooth.commandFault != nil,
+                  case .connecting = wifiProvisioningPhase else { return }
+            wifiProvisioningPhase = .failed(
+                message: "未能发送网络配置，请确认 Cardputer 仍然连接。"
+            )
         }
         .onChange(of: bluetooth.state.phase) {
             offerAudioToAlreadyConnectedDeviceIfNeeded()
@@ -1063,19 +1084,20 @@ private struct BridgeRootView: View {
             .bridgePanel()
         case 3:
             if deviceWiFiConnected {
-                Label("Cardputer 已接入 Wi-Fi", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(BridgeTheme.success)
-                    .padding(18)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .bridgePanel()
-            } else {
-                VStack(spacing: 12) {
-                    TextField("2.4GHz Wi-Fi 名称", text: $wifiSSID)
-                    SecureField("Wi-Fi 密码", text: $wifiPassword)
+                HStack(spacing: 12) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(BridgeTheme.success)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Cardputer 已接入 Wi-Fi").font(.headline)
+                        Text(currentWiFiName)
+                            .foregroundStyle(BridgeTheme.secondaryText)
+                    }
+                    Spacer()
                 }
-                .textFieldStyle(.roundedBorder)
                 .padding(18)
-                .bridgePanel()
+                .bridgePanel(border: BridgeTheme.success.opacity(0.3))
+            } else {
+                onboardingWiFiSetupCard
             }
         case 4:
             systemMicrophoneStatusCard(identifier: "onboarding-system-microphone-status")
@@ -1120,12 +1142,27 @@ private struct BridgeRootView: View {
         } else if setupStep == 2 && bluetooth.state.phase != .ready {
             actionButton
         } else if setupStep == 3 && !deviceWiFiConnected {
-            Button("连接并继续") {
-                guard let offer = audio.offer else { return }
-                bluetooth.provisionWiFiAndStartAudio(ssid: wifiSSID, password: wifiPassword, offer: offer)
+            Button {
+                beginOnboardingWiFiConnection()
+            } label: {
+                if case .connecting = wifiProvisioningPhase {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("正在连接…")
+                    }
+                } else if case .failed = wifiProvisioningPhase {
+                    Text("重试连接")
+                } else {
+                    Text("连接并继续")
+                }
             }
             .buttonStyle(BridgePrimaryButtonStyle())
-            .disabled(wifiSSID.isEmpty || wifiPassword.count < 8 || audio.offer == nil)
+            .disabled(
+                wifiSSID.isEmpty ||
+                    wifiPassword.count < 8 ||
+                    audio.offer == nil ||
+                    wifiProvisioningIsConnecting
+            )
         } else if setupStep == 4 {
             if systemMicrophonePipelineReady {
                 Button("继续") { setupStep = 5 }
@@ -1183,6 +1220,154 @@ private struct BridgeRootView: View {
         case 3: "选择 Cardputer 使用的 2.4 GHz Wi-Fi 网络。"
         case 4: "安装后，Cardputer Microphone 会出现在 Mac 的输入设备列表中。"
         default: "Cardputer 已准备好，可以开始使用。"
+        }
+    }
+
+    private var onboardingWiFiSetupCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Menu {
+                    if nearbyWiFi.networks.isEmpty {
+                        Text(nearbyWiFi.isScanning ? "正在扫描…" : "未发现附近网络")
+                    } else {
+                        ForEach(nearbyWiFi.networks) { network in
+                            Button {
+                                wifiSSID = network.ssid
+                                wifiPassword = ""
+                                isEnteringHiddenWiFi = false
+                                wifiProvisioningPhase = .idle
+                            } label: {
+                                Label(
+                                    "\(network.ssid) · 信道 \(network.channel)",
+                                    systemImage: network.signalSymbol
+                                )
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("其他网络…") {
+                        wifiSSID = ""
+                        wifiPassword = ""
+                        isEnteringHiddenWiFi = true
+                        wifiProvisioningPhase = .idle
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "wifi")
+                            .foregroundStyle(BridgeTheme.accent)
+                        Text(wifiSSID.isEmpty ? "选择 2.4 GHz Wi-Fi" : wifiSSID)
+                            .foregroundStyle(
+                                wifiSSID.isEmpty
+                                    ? BridgeTheme.secondaryText
+                                    : BridgeTheme.primaryText
+                            )
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BridgeTheme.secondaryText)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(
+                        BridgeTheme.background,
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(BridgeTheme.border)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .accessibilityIdentifier("onboarding-wifi-menu")
+
+                Button {
+                    nearbyWiFi.scan()
+                } label: {
+                    if nearbyWiFi.isScanning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("重新扫描附近的 2.4 GHz Wi-Fi")
+                .disabled(nearbyWiFi.isScanning)
+                .accessibilityIdentifier("onboarding-wifi-rescan")
+            }
+
+            if nearbyWiFi.isScanning {
+                Text("正在扫描附近的 2.4 GHz 网络…")
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+            } else if let fault = nearbyWiFi.fault {
+                Text(fault)
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.warning)
+            } else if nearbyWiFi.networks.isEmpty {
+                Text("没有发现网络。可以重新扫描，或从菜单选择“其他网络…”。")
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+            }
+
+            if isEnteringHiddenWiFi {
+                TextField("Wi-Fi 名称", text: $wifiSSID)
+                    .onChange(of: wifiSSID) {
+                        wifiProvisioningPhase = .idle
+                    }
+                    .accessibilityIdentifier("onboarding-wifi-ssid-input")
+            }
+
+            SecureField("Wi-Fi 密码", text: $wifiPassword)
+                .onChange(of: wifiPassword) {
+                    wifiProvisioningPhase = .idle
+                }
+                .accessibilityIdentifier("onboarding-wifi-password-input")
+
+            switch wifiProvisioningPhase {
+            case .idle:
+                EmptyView()
+            case .connecting(let ssid):
+                Label("正在让 Cardputer 连接 \(ssid)…", systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(BridgeTheme.secondaryText)
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(BridgeTheme.warning)
+            }
+        }
+        .font(.callout)
+        .textFieldStyle(.roundedBorder)
+        .padding(18)
+        .bridgePanel()
+    }
+
+    private var wifiProvisioningIsConnecting: Bool {
+        if case .connecting = wifiProvisioningPhase { return true }
+        return false
+    }
+
+    private func beginOnboardingWiFiConnection() {
+        guard let offer = audio.offer else {
+            wifiProvisioningPhase = .failed(
+                message: "无线麦克风尚未准备好，请稍后重试。"
+            )
+            return
+        }
+        let requestedSSID = wifiSSID
+        wifiProvisioningPhase = .connecting(ssid: requestedSSID)
+        bluetooth.provisionWiFiAndStartAudio(
+            ssid: requestedSSID,
+            password: wifiPassword,
+            offer: offer
+        )
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(15))
+            guard case .connecting(let pendingSSID) = wifiProvisioningPhase,
+                  pendingSSID == requestedSSID,
+                  !deviceWiFiConnected else { return }
+            wifiProvisioningPhase = .failed(
+                message: "连接超时，请检查 Wi-Fi 密码和信号后重试。"
+            )
         }
     }
 

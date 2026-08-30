@@ -55,8 +55,13 @@ python3 "$product_ui_verifier" "$app_source" "$ble_source" "$macos_dir"
     clean test
 )
 
+CARDPUTER_BRIDGE_BUILD_ROOT="$build_root" DEVELOPER_DIR="$developer_dir" \
+  "$project_dir/scripts/embed-audio-installer.sh" "$app"
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
+test -x "$app/Contents/Resources/AudioInstaller/install-bundled-audio-driver.sh"
+test -x "$app/Contents/Resources/AudioInstaller/check-audio-hal-runtime.sh"
+test -f "$app/Contents/Resources/AudioInstaller/CardputerBridgeAudio.driver.zip"
 test "$(plutil -extract CFBundlePackageType raw "$app/Contents/Info.plist")" = "APPL"
 test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = "io.nexu.cardputerbridge.app"
 test -n "$(plutil -extract NSBluetoothAlwaysUsageDescription raw "$app/Contents/Info.plist")"

@@ -24,6 +24,8 @@ command -v xcodegen >/dev/null
 )
 
 app="$derived_data/Build/Products/Debug/Cardputer Bridge.app"
+CARDPUTER_BRIDGE_BUILD_ROOT="$build_root" DEVELOPER_DIR="$developer_dir" \
+  "$project_dir/scripts/embed-audio-installer.sh" "$app"
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
 

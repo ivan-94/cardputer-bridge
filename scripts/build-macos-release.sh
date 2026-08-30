@@ -76,22 +76,14 @@ executable="$app/Contents/MacOS/Cardputer Bridge"
 [[ "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" == "$version" ]]
 file "$executable" | grep -q 'Mach-O 64-bit executable arm64'
 
-CARDPUTER_BRIDGE_BUILD_ROOT="$build_root" DEVELOPER_DIR="$developer_dir" "$project_dir/scripts/build-audio-plugin.sh" >/dev/null
+CARDPUTER_BRIDGE_BUILD_ROOT="$build_root" DEVELOPER_DIR="$developer_dir" \
+  "$project_dir/scripts/embed-audio-installer.sh" "$app"
 driver="$build_root/audio-plugin/CardputerBridgeAudio.driver"
 [[ -d "$driver" ]] || { printf 'Audio driver missing: %s\n' "$driver" >&2; exit 1; }
 codesign --verify --deep --strict "$driver"
 
 audio_installer_resources="$app/Contents/Resources/AudioInstaller"
 driver_archive="$audio_installer_resources/CardputerBridgeAudio.driver.zip"
-mkdir -p "$audio_installer_resources"
-ditto -c -k --sequesterRsrc --keepParent "$driver" "$driver_archive"
-cp \
-  "$project_dir/packaging/macos/app-resources/AudioInstaller/install-bundled-audio-driver.sh" \
-  "$audio_installer_resources/install-bundled-audio-driver.sh"
-cp "$project_dir/scripts/check-audio-hal-runtime.sh" "$audio_installer_resources/check-audio-hal-runtime.sh"
-chmod +x \
-  "$audio_installer_resources/install-bundled-audio-driver.sh" \
-  "$audio_installer_resources/check-audio-hal-runtime.sh"
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
 [[ -f "$driver_archive" ]]
