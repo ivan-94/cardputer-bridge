@@ -125,8 +125,16 @@ int main() {
             ota) ||
         std::string_view(ota.version.data()) != "0.10.0" ||
         std::string_view(ota.url.data()).find("https://github.com/ivan-94/") != 0 ||
+        !cardbridge::parse_ota_start(
+            R"({"v":1,"type":"ota_start","ver":"0.10.0","url":"http://192.168.2.109:54321/cardputer-bridge/0123456789abcdef0123456789abcdef.bin","usb":true})",
+            ota) ||
+        std::string_view(ota.url.data()).find("http://192.168.2.109:") != 0 ||
+        !ota.usb_power_verified ||
         cardbridge::parse_ota_start(
             R"({"v":1,"type":"ota_start","ver":"0.10.0","url":"http://192.168.2.1/firmware.bin"})",
+            ota) ||
+        cardbridge::parse_ota_start(
+            R"({"v":1,"type":"ota_start","ver":"0.10.0","url":"http://8.8.8.8:54321/cardputer-bridge/0123456789abcdef0123456789abcdef.bin"})",
             ota)) {
         return EXIT_FAILURE;
     }

@@ -309,7 +309,7 @@ private final class SystemMicrophoneProducer {
     }
 }
 
-private enum LocalIPv4 {
+enum LocalIPv4 {
     static func preferredAddress() -> String? {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0, let first = interfaces else {

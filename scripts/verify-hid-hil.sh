@@ -2,8 +2,9 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$project_dir/scripts/resolve-serial-python.sh"
 port="${CARDPUTER_PORT:-/dev/cu.usbmodem2101}"
-python="${CARDPUTER_SERIAL_PYTHON:-$HOME/.local/share/cardputer-bridge/launcher-venv/bin/python}"
+python="$(resolve_cardputer_serial_python)"
 
 if /usr/sbin/ioreg -l -w 0 -c IOHIDSystem | \
   /usr/bin/grep -q '"CGSSessionScreenIsLocked"=Yes'; then
@@ -13,7 +14,6 @@ fi
 
 consumer="$($project_dir/scripts/build-macos-hid-consumer.sh)"
 
-test -x "$python"
 if [[ "${1:-}" == "--preflight" ]]; then
   exec "$consumer" --preflight
 fi

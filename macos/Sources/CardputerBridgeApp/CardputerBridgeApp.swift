@@ -74,6 +74,8 @@ final class CardputerBridgeAppDelegate: NSObject, NSApplicationDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         window.minSize = NSSize(width: 920, height: 650)
         window.contentView = NSHostingView(rootView: root)
         window.center()
@@ -161,6 +163,12 @@ final class CardputerBridgeAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApplication() {
         NSApp.terminate(nil)
+    }
+}
+
+extension CardputerBridgeAppDelegate: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 }
 

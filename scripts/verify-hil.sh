@@ -1,10 +1,11 @@
 #!/bin/sh
 set -eu
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$script_dir/resolve-serial-python.sh"
 port="${CARDPUTER_PORT:-/dev/cu.usbmodem2101}"
-python="${CARDPUTER_SERIAL_PYTHON:-$HOME/.local/share/cardputer-bridge/launcher-venv/bin/python}"
+python="$(resolve_cardputer_serial_python)"
 
-test -x "$python"
-exec "$python" "$(dirname "$0")/verify_firmware_boot.py" \
+exec "$python" "$script_dir/verify_firmware_boot.py" \
   --port "$port" \
   --timeout "${CARDPUTER_BOOT_TIMEOUT_SECONDS:-8}"

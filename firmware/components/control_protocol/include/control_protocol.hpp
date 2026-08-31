@@ -56,6 +56,7 @@ struct ConfigChunk {
 struct OTAStart {
     std::array<char, 24> version{};
     std::array<char, 128> url{};
+    bool usb_power_verified = false;
 };
 
 bool parse_staged_base64_value(

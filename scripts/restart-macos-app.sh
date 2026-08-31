@@ -19,37 +19,42 @@ if [[ ! -x "$executable" ]]; then
   exit 2
 fi
 
-matching_pids() {
+product_pids() {
   {
-    # Xcode/Harness may leave the same bundle running from another DerivedData
-    # directory. Every instance shares one bundle identifier and would compete
-    # for BLE heartbeats, UDP audio, and the HAL bridge, so stop every build of
-    # this product under the dedicated user build root before launching one.
-    pgrep -f -x "$build_root/.*/Cardputer Bridge.app/Contents/MacOS/Cardputer Bridge" || true
-    pgrep -f -x "$build_root/.*/Cardputer Bridge.app/Contents/MacOS/Cardputer Bridge .*" || true
+    # Installed, version-suffixed and DerivedData copies share BLE, UDP and HAL
+    # resources. Stop every Cardputer Bridge app before selecting one build.
+    pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge' || true
+    pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge .*' || true
   } | sort -u
 }
 
-if [[ -n "$(matching_pids)" ]]; then
+launched_pids() {
+  {
+    pgrep -f -x "$executable" || true
+    pgrep -f -x "$executable .*" || true
+  } | sort -u
+}
+
+if [[ -n "$(product_pids)" ]]; then
   osascript -e 'tell application id "io.nexu.cardputerbridge.app" to quit' \
     >/dev/null 2>&1 || true
   for _ in {1..30}; do
-    [[ -z "$(matching_pids)" ]] && break
+    [[ -z "$(product_pids)" ]] && break
     sleep 0.1
   done
 fi
 
 while IFS= read -r pid; do
   [[ -n "$pid" ]] && kill -TERM "$pid"
-done < <(matching_pids)
+done < <(product_pids)
 
 for _ in {1..50}; do
-  if [[ -z "$(matching_pids)" ]]; then
+  if [[ -z "$(product_pids)" ]]; then
     break
   fi
   sleep 0.1
 done
-if [[ -n "$(matching_pids)" ]]; then
+if [[ -n "$(product_pids)" ]]; then
   printf 'FAIL CARDPUTER_MACOS_APP_DID_NOT_STOP\n' >&2
   exit 1
 fi
@@ -74,7 +79,11 @@ open "${open_args[@]}" \
   "$app" \
   --args -ApplePersistenceIgnoreState YES
 for _ in {1..50}; do
-  if [[ -n "$(matching_pids)" ]]; then
+  if [[ -n "$(launched_pids)" ]]; then
+    # Do not accept a transient process that immediately hands activation to a
+    # different installed copy with the same bundle identifier.
+    sleep 1
+    [[ -n "$(launched_pids)" ]] || continue
     printf 'PASS cardputer_macos_app_restarted app=%s probe=%s\n' \
       "$app" "$probe_path"
     exit 0

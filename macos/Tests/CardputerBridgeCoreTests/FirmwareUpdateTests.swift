@@ -3,6 +3,56 @@ import XCTest
 @testable import CardputerBridgeCore
 
 final class FirmwareUpdateTests: XCTestCase {
+    func testOTAPreflightRequiresSafePowerAndWiFiAtStart() {
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(nil),
+            .telemetryUnavailable
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 29, rssi: -60)
+            ),
+            .lowBattery(percent: 29)
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 0, rssi: -60, externalPower: true)
+            ),
+            .ready
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 0, rssi: -60),
+                usbPowerVerified: true
+            ),
+            .ready
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 80, rssi: -81)
+            ),
+            .weakWiFi(rssi: -81)
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 80, rssi: -80)
+            ),
+            .ready
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: 80, rssi: 0)
+            ),
+            .wifiUnavailable
+        )
+        XCTAssertEqual(
+            FirmwareOTAPreflightPolicy.evaluate(
+                .fixture(battery: -1, rssi: -60)
+            ),
+            .telemetryUnavailable
+        )
+    }
+
     func testDeviceIdentityDecodesProductionCapabilities() throws {
         let data = Data(
             #"{"v":1,"device":"Cardputer-ADV","fw":"0.10.0","layout":2,"ota":true}"#.utf8
@@ -24,6 +74,23 @@ final class FirmwareUpdateTests: XCTestCase {
         XCTAssertEqual(
             FirmwareUpdatePolicy.plan(device: device, release: release),
             .usbMigrationRequired(targetVersion: "0.10.0")
+        )
+    }
+
+    func testLegacyDirectDownloadFirmwareRequiresOneUSBMigration() throws {
+        let release = try FirmwareReleasePayload.fixture(
+            version: "0.10.6",
+            layoutVersion: 3
+        )
+        let device = FirmwareDeviceStatus(
+            version: "0.10.5",
+            layoutVersion: 2,
+            otaCapable: true
+        )
+
+        XCTAssertEqual(
+            FirmwareUpdatePolicy.plan(device: device, release: release),
+            .usbMigrationRequired(targetVersion: "0.10.6")
         )
     }
 
@@ -142,6 +209,27 @@ final class FirmwareUpdateTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(encoded.count, 160)
         XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("ota_start"))
+        XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("\"usb\":false"))
+    }
+
+    func testOTAStartCommandAcceptsOnlyTokenizedPrivateRelayURL() throws {
+        let local = FirmwareOTAStartMessage(
+            version: "0.10.6",
+            url: "http://192.168.60.2:54321/cardputer-bridge/0123456789abcdef0123456789abcdef.bin"
+        )
+        XCTAssertNoThrow(try local.encoded())
+
+        let publicHTTP = FirmwareOTAStartMessage(
+            version: "0.10.6",
+            url: "http://8.8.8.8:54321/cardputer-bridge/0123456789abcdef0123456789abcdef.bin"
+        )
+        XCTAssertThrowsError(try publicHTTP.encoded())
+
+        let unscopedPrivate = FirmwareOTAStartMessage(
+            version: "0.10.6",
+            url: "http://192.168.60.2:54321/firmware.bin"
+        )
+        XCTAssertThrowsError(try unscopedPrivate.encoded())
     }
 
     func testEspflashCuAndTTYAliasesResolveToOnePhysicalDevice() {
@@ -294,10 +382,25 @@ private extension FirmwareUpdateTests {
     """#
 }
 
+private extension DeviceTelemetry {
+    static func fixture(
+        battery: Int,
+        rssi: Int,
+        externalPower: Bool = false
+    ) -> Self {
+        DeviceTelemetry(
+            batteryPercent: battery,
+            wifiRSSI: rssi,
+            externalPower: externalPower
+        )
+    }
+}
+
 private extension FirmwareReleasePayload {
     static func fixture(
         version: String,
-        minimumMacOSAppVersion: String = "0.2.0"
+        minimumMacOSAppVersion: String = "0.2.0",
+        layoutVersion: Int = 2
     ) throws -> Self {
         FirmwareReleasePayload(
             schemaVersion: 2,
@@ -308,7 +411,7 @@ private extension FirmwareReleasePayload {
             publishedAt: "2026-08-29T00:00:00Z",
             firmware: FirmwareReleasePayload.Firmware(
                 chip: "esp32s3",
-                layoutVersion: 2,
+                layoutVersion: layoutVersion,
                 ota: .init(
                     role: "ota",
                     url: "https://github.com/ivan-94/cardputer-bridge/releases/download/v\(version)/cardputer.bin",

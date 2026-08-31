@@ -6,6 +6,7 @@
 #include "device_audio.hpp"
 #include "device_shortcut_config.hpp"
 #include "firmware_update.hpp"
+#include "firmware_update_policy.hpp"
 #include "input_router.hpp"
 #include "recording_led.hpp"
 #include "serial_harness_protocol.hpp"
@@ -65,6 +66,7 @@ std::atomic_uint32_t g_hid_reports_sent{0};
 std::atomic_uint32_t g_hid_report_failures{0};
 std::atomic_bool g_input_all_keys_up{true};
 std::atomic_int g_battery_level{-1};
+std::atomic_bool g_external_power_present{false};
 std::atomic_int g_recording_led_target{0};
 std::atomic_bool g_recording_led_power_hold{false};
 
@@ -75,6 +77,12 @@ const char* recording_led_target_label() {
     return g_recording_led_target.load(std::memory_order_acquire) == 1
         ? "red"
         : "off";
+}
+
+bool external_power_present() {
+    const int vbus_mv = M5.Power.getVBUSVoltage();
+    if (vbus_mv >= 4000) return true;
+    return M5.Power.isCharging() == m5::Power_Class::is_charging;
 }
 
 enum class DisplayPowerState : std::uint8_t {
@@ -378,9 +386,13 @@ void publish_telemetry() {
     std::snprintf(
         telemetry_json,
         sizeof(telemetry_json),
-        "{\"v\":1,\"event\":\"telemetry\",\"bat\":%d,\"rssi\":%" PRId32 "}",
+        "{\"v\":1,\"event\":\"telemetry\",\"bat\":%d,\"rssi\":%" PRId32
+        ",\"ext\":%s}",
         g_battery_level.load(std::memory_order_acquire),
-        audio.wifi_rssi
+        audio.wifi_rssi,
+        g_external_power_present.load(std::memory_order_acquire)
+            ? "true"
+            : "false"
     );
     (void)ble_bridge_notify_state(telemetry_json);
 }
@@ -415,7 +427,7 @@ void emit_diagnostic_state(
         "\"main_stack_high_water_words\":%u,"
         "\"audio_stack_high_water_words\":%u,"
         "\"control_queue_depth\":%u,"
-        "\"battery_level\":%d,"
+        "\"battery_level\":%d,\"external_power\":%s,"
         "\"recording_led_target\":\"%s\","
         "\"recording_led_brightness\":%u,\"recording_led_rgb\":\"%s\","
         "\"recording_led_power_hold\":%s,"
@@ -450,6 +462,9 @@ void emit_diagnostic_state(
         static_cast<unsigned>(cardbridge::device_audio_stack_high_water_words()),
         static_cast<unsigned>(uxQueueMessagesWaiting(g_control_command_queue)),
         g_battery_level.load(std::memory_order_acquire),
+        g_external_power_present.load(std::memory_order_acquire)
+            ? "true"
+            : "false",
         recording_led_target_label(),
         static_cast<unsigned>(kRecordingLedBrightness),
         kRecordingLedDriveRgb,
@@ -803,6 +818,10 @@ extern "C" void app_main() {
         std::clamp<std::int32_t>(M5.Power.getBatteryLevel(), -1, 100),
         std::memory_order_release
     );
+    g_external_power_present.store(
+        external_power_present(),
+        std::memory_order_release
+    );
     M5Canvas screen(&M5.Display);
     screen.setColorDepth(16);
     if (screen.createSprite(M5.Display.width(), M5.Display.height()) == nullptr) {
@@ -866,7 +885,7 @@ extern "C" void app_main() {
         identity_json,
         sizeof(identity_json),
         "{\"v\":1,\"device\":\"Cardputer-ADV\",\"service\":\"CardputerBridge\","
-        "\"fw\":\"%s\",\"layout\":2,\"ota\":true}",
+        "\"fw\":\"%s\",\"layout\":3,\"ota\":true}",
         esp_app_get_description()->version
     );
     const esp_err_t identity_result = ble_bridge_set_identity(identity_json);
@@ -1115,12 +1134,32 @@ extern "C" void app_main() {
                     }
                     cardbridge::device_audio_set_capture_enabled(false);
                     const auto audio = cardbridge::device_audio_status();
-                    const esp_err_t result = audio.wifi_connected
+                    const bool external_power = external_power_present() ||
+                        pending_control.ota_start.usb_power_verified;
+                    const int battery_level = std::clamp<std::int32_t>(
+                        M5.Power.getBatteryLevel(),
+                        -1,
+                        100
+                    );
+                    g_battery_level.store(
+                        battery_level,
+                        std::memory_order_release
+                    );
+                    const auto readiness = cardbridge::firmware_update_readiness(
+                        battery_level,
+                        external_power,
+                        audio.wifi_connected,
+                        audio.wifi_rssi
+                    );
+                    const esp_err_t result = readiness ==
+                            cardbridge::FirmwareUpdateReadiness::kReady
                         ? cardbridge::firmware_update_start(
                             pending_control.ota_start,
                             nullptr
                         )
-                        : ESP_ERR_INVALID_STATE;
+                        : static_cast<esp_err_t>(
+                            cardbridge::firmware_update_readiness_error(readiness)
+                        );
                     std::snprintf(
                         feedback,
                         sizeof(feedback),
@@ -1555,6 +1594,10 @@ extern "C" void app_main() {
         if (now >= next_battery_sample_ms) {
             g_battery_level.store(
                 std::clamp<std::int32_t>(M5.Power.getBatteryLevel(), -1, 100),
+                std::memory_order_release
+            );
+            g_external_power_present.store(
+                external_power_present(),
                 std::memory_order_release
             );
             publish_telemetry();

@@ -189,6 +189,26 @@ target_compile_options(audio_packet_test PRIVATE -Wall -Wextra -Wpedantic -Werro
 
 add_test(NAME audio_packet_test COMMAND audio_packet_test)
 
+add_library(firmware_update_policy
+    firmware/components/firmware_update/firmware_update_policy.cpp
+)
+
+target_include_directories(firmware_update_policy
+    PUBLIC firmware/components/firmware_update/include
+)
+
+target_compile_features(firmware_update_policy PUBLIC cxx_std_17)
+target_compile_options(firmware_update_policy PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(firmware_update_policy_test
+    tests/unit/firmware_update_policy_test.cpp
+)
+
+target_link_libraries(firmware_update_policy_test PRIVATE firmware_update_policy)
+target_compile_options(firmware_update_policy_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME firmware_update_policy_test COMMAND firmware_update_policy_test)
+
 add_executable(input_router_host
     harness/fake-device/input_router_host.cpp
 )

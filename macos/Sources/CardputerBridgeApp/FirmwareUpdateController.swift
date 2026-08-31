@@ -28,6 +28,7 @@ final class FirmwareUpdateController: ObservableObject {
     @Published private(set) var usbReadiness: USBReadiness = .idle
 
     private var lastProbedPorts: [String] = []
+    private var relay: FirmwareRelayServer?
 
     private let manifestURL = URL(
         string: "https://github.com/ivan-94/cardputer-bridge/releases/latest/download/cardputer-bridge-release.json"
@@ -93,6 +94,8 @@ final class FirmwareUpdateController: ObservableObject {
 
     func check(identity: DeviceFirmwareIdentity?) {
         guard phase != .checking else { return }
+        relay?.stop()
+        relay = nil
         release = nil
         phase = .checking
         Task {
@@ -134,12 +137,66 @@ final class FirmwareUpdateController: ObservableObject {
 
     func beginOTA(using bluetooth: BLEBridgeController) {
         guard let release else { return }
-        if bluetooth.startFirmwareOTA(release: release) {
-            phase = .ota(progress: 0)
-        } else {
+        let usbPowerVerified = !localUSBSerialPorts().isEmpty
+        switch FirmwareOTAPreflightPolicy.evaluate(
+            bluetooth.deviceTelemetry,
+            usbPowerVerified: usbPowerVerified
+        ) {
+        case .ready:
+            break
+        case .telemetryUnavailable:
             phase = .failed(
-                message: "Cardputer 控制通道尚未就绪，请恢复蓝牙连接后重试。"
+                message: "正在读取 Cardputer 的电量和网络状态，请稍后重试。"
             )
+            return
+        case .wifiUnavailable:
+            phase = .failed(
+                message: "Cardputer 尚未接入 Wi-Fi。请先连接 2.4 GHz 网络再更新。"
+            )
+            return
+        case .lowBattery(let percent):
+            phase = .failed(
+                message: "Cardputer 电量仅 \(percent)%。请充至 30% 以上，或用 USB 连接这台 Mac 后重试。"
+            )
+            return
+        case .weakWiFi(let rssi):
+            phase = .failed(
+                message: "Cardputer 的 Wi-Fi 信号过弱（\(rssi) dBm）。请靠近路由器后重试。"
+            )
+            return
+        }
+        relay?.stop()
+        relay = nil
+        phase = .downloading
+        Task {
+            let candidate = FirmwareRelayServer()
+            do {
+                let url = try await candidate.prepare(release: release)
+                guard self.release?.version == release.version else {
+                    candidate.stop()
+                    return
+                }
+                relay = candidate
+                if bluetooth.startFirmwareOTA(
+                    version: release.version,
+                    url: url.absoluteString,
+                    usbPowerVerified: usbPowerVerified
+                ) {
+                    phase = .ota(progress: 0)
+                } else {
+                    candidate.stop()
+                    relay = nil
+                    phase = .failed(
+                        message: "Cardputer 控制通道尚未就绪，请恢复蓝牙连接后重试。"
+                    )
+                }
+            } catch {
+                candidate.stop()
+                relay = nil
+                phase = .failed(
+                    message: "Mac 无法准备局域网固件更新：\(error.localizedDescription)"
+                )
+            }
         }
     }
 
@@ -150,10 +207,33 @@ final class FirmwareUpdateController: ObservableObject {
             phase = .ota(progress: event.progress)
         case "restarting":
             phase = .ota(progress: 100)
+            relay?.stop()
+            relay = nil
         case "failed":
-            phase = .failed(message: "Cardputer 无法安装更新（错误 \(event.error)）。当前固件仍可继续启动。")
+            phase = .failed(message: otaFailureMessage(error: event.error))
+            relay?.stop()
+            relay = nil
         default:
             break
+        }
+    }
+
+    private func otaFailureMessage(error: Int) -> String {
+        switch error {
+        case 0x7002:
+            "Cardputer 无法连接这台 Mac 的更新服务。请确认两台设备位于同一局域网，并允许 Cardputer Bridge 接收入站连接；当前固件不受影响。"
+        case 0x101:
+            "Cardputer 可用内存不足，更新已安全停止。请重新启动设备后重试；当前固件不受影响。"
+        case 0x7101:
+            "Cardputer 尚未接入 Wi-Fi。请先连接 2.4 GHz 网络再更新。"
+        case 0x7102:
+            "Cardputer 暂时无法读取电量。请用 USB 连接这台 Mac 后重试。"
+        case 0x7103:
+            "Cardputer 电量低于 30%。请充电，或用 USB 连接这台 Mac 后重试。"
+        case 0x7104:
+            "Cardputer 的 Wi-Fi 信号过弱。请靠近路由器后重试。"
+        default:
+            "Cardputer 无法完成固件更新（错误 \(error)）。当前固件不受影响。"
         }
     }
 
@@ -161,6 +241,8 @@ final class FirmwareUpdateController: ObservableObject {
         guard let identity,
               let release,
               identity.firmwareVersion == release.version else { return }
+        relay?.stop()
+        relay = nil
         phase = .complete(version: release.version)
     }
 

@@ -57,7 +57,7 @@ def main() -> None:
         "channel": "stable",
         "firmware": {
             "chip": "esp32s3",
-            "layout_version": 2,
+            "layout_version": 3,
             "ota": artifact(
                 "ota",
                 paths["factory"],
@@ -71,7 +71,7 @@ def main() -> None:
                 artifact("bootloader", paths["bootloader"], f"{base}/bootloader.bin", "0x0"),
             ],
         },
-        "minimum_macos_app_version": "0.2.0",
+        "minimum_macos_app_version": args.version,
         "product": "cardputer-bridge",
         "published_at": args.published_at,
         "schema_version": 2,

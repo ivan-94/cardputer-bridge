@@ -22,6 +22,9 @@ install -m 600 "$signing_key" \
   "$firmware_dir/keys/firmware-signing-rsa3072.pem"
 trap 'rm -f "$firmware_dir/keys/firmware-signing-rsa3072.pem"' EXIT
 
+# sdkconfig.production is generated from the two tracked defaults. Reusing an
+# older generated file would silently preserve obsolete TLS settings.
+rm -f "$firmware_dir/sdkconfig.production"
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults" \
   "$idf_entry" -C "$firmware_dir" -B "$build_dir" \
   -D SDKCONFIG="$firmware_dir/sdkconfig.production" \
@@ -34,6 +37,12 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults" \
 grep -q '^CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y$' \
   "$firmware_dir/sdkconfig.production"
 grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' \
+  "$firmware_dir/sdkconfig.production"
+grep -q '^CONFIG_MBEDTLS_DYNAMIC_BUFFER=y$' \
+  "$firmware_dir/sdkconfig.production"
+grep -q '^CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y$' \
+  "$firmware_dir/sdkconfig.production"
+grep -q '^CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y$' \
   "$firmware_dir/sdkconfig.production"
 "$idf_entry" -C "$firmware_dir" -B "$build_dir" secure-verify-signature \
   --version 2 \

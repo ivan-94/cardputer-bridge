@@ -150,6 +150,16 @@ class FirmwareReleaseContractTests(unittest.TestCase):
         ).read_text()
         self.assertIn("CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y", defaults)
         self.assertIn("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y", defaults)
+        self.assertIn("CONFIG_MBEDTLS_DYNAMIC_BUFFER=y", defaults)
+        self.assertIn("CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y", defaults)
+        self.assertIn("CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y", defaults)
+        production_builder = (
+            PROJECT / "scripts/build-production-firmware.sh"
+        ).read_text()
+        self.assertIn('rm -f "$firmware_dir/sdkconfig.production"', production_builder)
+        self.assertIn("CONFIG_MBEDTLS_DYNAMIC_BUFFER=y", production_builder)
+        self.assertIn("CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y", production_builder)
+        self.assertIn("CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y", production_builder)
         self.assertIn(
             "CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y", production
         )
@@ -168,10 +178,16 @@ class FirmwareReleaseContractTests(unittest.TestCase):
             "esp_https_ota_is_complete_data_received",
             "esp_https_ota_finish",
             "esp_https_ota_abort",
+            "firmware_connect_retry_delay_ms",
+            "esp_tls_get_and_clear_last_error",
+            "heap_caps_get_largest_free_block",
+            "esp_wifi_get_ps",
+            "esp_wifi_set_ps(previous_wifi_ps)",
         ):
             self.assertIn(required, updater)
 
         main = (PROJECT / "firmware/main/main.cpp").read_text()
+        self.assertIn('"layout\\\":3', main)
         self.assertIn(
             "!running_image_confirmed && keyboard_ready && now >= 10'000",
             main,
@@ -194,6 +210,10 @@ class FirmwareReleaseContractTests(unittest.TestCase):
         self.assertEqual(role_positions, sorted(role_positions))
         self.assertIn("SHA256.hash(data: data).hex", installer)
         self.assertIn("Task.detached(priority: .userInitiated)", installer)
+        self.assertIn(r"\(percent)%", installer)
+        self.assertIn(r"\(rssi) dBm", installer)
+        self.assertNotIn('"电量仅 (percent)%', installer)
+        self.assertNotIn("信号过弱（(rssi) dBm", installer)
 
     def test_manifest_generator_hashes_and_signs_exact_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -255,7 +275,8 @@ class FirmwareReleaseContractTests(unittest.TestCase):
             manifest = json.loads(output.read_text())
             payload = manifest["payload"]
             self.assertEqual(payload["version"], "0.10.0")
-            self.assertEqual(payload["firmware"]["layout_version"], 2)
+            self.assertEqual(payload["minimum_macos_app_version"], "0.10.0")
+            self.assertEqual(payload["firmware"]["layout_version"], 3)
             self.assertEqual(
                 [item["role"] for item in payload["firmware"]["usb"]],
                 ["factory", "otadata", "partition_table", "bootloader"],

@@ -48,6 +48,7 @@ final class BLEBridgeController: NSObject, ObservableObject {
     private var harnessMicrophoneIntentSent = false
     private var harnessShortcutLearnToken: UInt32?
     private var managerStarted = false
+    private var radioCallbackTotal = 0
 
     private static let rememberedDeviceDefaultsKey =
         "cardputerBridge.rememberedPeripheralID"
@@ -231,7 +232,11 @@ final class BLEBridgeController: NSObject, ObservableObject {
     }
 
     @discardableResult
-    func startFirmwareOTA(release: FirmwareReleasePayload) -> Bool {
+    func startFirmwareOTA(
+        version: String,
+        url: String,
+        usbPowerVerified: Bool = false
+    ) -> Bool {
         guard state.canSendCommand else {
             commandFault = "control_channel_not_ready"
             return false
@@ -240,8 +245,9 @@ final class BLEBridgeController: NSObject, ObservableObject {
             firmwareOTAEvent = nil
             enqueueControlWrites([
                 try FirmwareOTAStartMessage(
-                    version: release.version,
-                    url: release.firmware.ota.url
+                    version: version,
+                    url: url,
+                    usbPowerVerified: usbPowerVerified
                 ).encoded()
             ])
             return true
@@ -566,6 +572,9 @@ final class BLEBridgeController: NSObject, ObservableObject {
         } ?? NSNull()
         let snapshot: [String: Any] = [
             "v": 1,
+            "bluetooth_authorization": bluetoothAuthorizationName,
+            "central_state": central.map { bluetoothStateName($0.state) } ?? NSNull(),
+            "radio_callback_total": radioCallbackTotal,
             "radio": reducer.state.radio.rawValue,
             "phase": reducer.state.phase.rawValue,
             "manager_started": managerStarted,
@@ -593,6 +602,10 @@ final class BLEBridgeController: NSObject, ObservableObject {
             "last_shortcut_event": shortcutEvent,
             "battery_percent": deviceTelemetry?.batteryPercent ?? NSNull(),
             "wifi_rssi": deviceTelemetry?.wifiRSSI ?? NSNull(),
+            "external_power": deviceTelemetry?.externalPower ?? NSNull(),
+            "firmware_version": firmwareIdentity?.firmwareVersion ?? NSNull(),
+            "firmware_layout": firmwareIdentity?.layoutVersion ?? NSNull(),
+            "firmware_ota_capable": firmwareIdentity?.otaCapable ?? NSNull(),
         ]
         guard let data = try? JSONSerialization.data(
             withJSONObject: snapshot,
@@ -600,10 +613,33 @@ final class BLEBridgeController: NSObject, ObservableObject {
         ) else { return }
         try? data.write(to: runtimeProbeURL, options: .atomic)
     }
+
+    private var bluetoothAuthorizationName: String {
+        switch CBManager.authorization {
+        case .notDetermined: "notDetermined"
+        case .restricted: "restricted"
+        case .denied: "denied"
+        case .allowedAlways: "allowedAlways"
+        @unknown default: "unknown"
+        }
+    }
+
+    private func bluetoothStateName(_ state: CBManagerState) -> String {
+        switch state {
+        case .unknown: "unknown"
+        case .resetting: "resetting"
+        case .unsupported: "unsupported"
+        case .unauthorized: "unauthorized"
+        case .poweredOff: "poweredOff"
+        case .poweredOn: "poweredOn"
+        @unknown default: "unknown"
+        }
+    }
 }
 
 extension BLEBridgeController: @preconcurrency CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        radioCallbackTotal += 1
         let radio: BluetoothRadioState = switch central.state {
         case .unknown: .unknown
         case .resetting: .resetting

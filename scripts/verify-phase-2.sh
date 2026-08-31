@@ -2,8 +2,9 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$project_dir/scripts/resolve-serial-python.sh"
 port="${CARDPUTER_PORT:-/dev/cu.usbmodem2101}"
-serial_python="${CARDPUTER_SERIAL_PYTHON:-$HOME/.local/share/cardputer-bridge/launcher-venv/bin/python}"
+serial_python="$(resolve_cardputer_serial_python)"
 runtime_probe="${CARDPUTER_BRIDGE_MACOS_PROBE_PATH:-$HOME/.local/share/cardputer-bridge/runtime/macos-state.json}"
 fixture="$project_dir/harness/fixtures/shortcut-config-v2.json"
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/cardputer-phase2.XXXXXX")"

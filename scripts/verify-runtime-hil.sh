@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$script_dir/resolve-serial-python.sh"
 port="${CARDPUTER_PORT:-/dev/cu.usbmodem2101}"
-python="${CARDPUTER_SERIAL_PYTHON:-$HOME/.local/share/cardputer-bridge/launcher-venv/bin/python}"
+python="$(resolve_cardputer_serial_python)"
 macos_app="${CARDPUTER_MACOS_APP:-$HOME/.local/share/cardputer-bridge/build/xcode/Build/Products/Debug/Cardputer Bridge.app}"
 mode="serial-control"
 previous=""
@@ -13,8 +15,6 @@ for argument in "$@"; do
     fi
     previous="$argument"
 done
-
-test -x "$python"
 
 # The serial-control scenario must own the control lease. A running Mac App
 # would keep sending real BLE heartbeats and make the intended lease-expiry
@@ -30,7 +30,7 @@ matching_app_pids() {
 }
 restore_app() {
     if [ "$app_was_running" -eq 1 ]; then
-        "$(dirname "$0")/restart-macos-app.sh" >/dev/null 2>&1 || true
+        "$script_dir/restart-macos-app.sh" >/dev/null 2>&1 || true
     fi
 }
 trap restore_app EXIT
@@ -48,7 +48,7 @@ if [ "$mode" = "serial-control" ] && [ -x "$app_executable" ]; then
     fi
 fi
 
-if "$python" "$(dirname "$0")/verify_runtime_hil.py" --port "$port" "$@"; then
+if "$python" "$script_dir/verify_runtime_hil.py" --port "$port" "$@"; then
     result=0
 else
     result=$?

@@ -2,12 +2,13 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$project_dir/scripts/resolve-serial-python.sh"
 build_root="${CARDPUTER_BRIDGE_BUILD_ROOT:-$HOME/.local/share/cardputer-bridge/build}"
 build_dir="${CARDPUTER_FIRMWARE_BUILD_DIR:-$build_root/firmware}"
 evidence_root="${CARDPUTER_FINALIZATION_ROOT:-$HOME/.local/share/cardputer-bridge/finalizations}"
 port="${CARDPUTER_PORT:-/dev/cu.usbmodem2101}"
 python="${CARDPUTER_IDF54_PYTHON:-$HOME/.espressif/python_env/idf5.4_py3.14_env/bin/python}"
-serial_python="${CARDPUTER_SERIAL_PYTHON:-$HOME/.local/share/cardputer-bridge/launcher-venv/bin/python}"
+serial_python="$(resolve_cardputer_serial_python)"
 manifest="$project_dir/firmware-release.json"
 candidate="0.9.6-recording-led"
 mode=""

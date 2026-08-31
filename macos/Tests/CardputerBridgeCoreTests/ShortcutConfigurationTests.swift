@@ -102,10 +102,14 @@ final class ShortcutConfigurationTests: XCTestCase {
     }
 
     func testDeviceTelemetryRejectsInvalidBatteryAndDecodesRSSI() throws {
-        let valid = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53}"#.data(using: .utf8)!
+        let valid = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53,"ext":true}"#.data(using: .utf8)!
         let snapshot = try XCTUnwrap(DeviceTelemetry.decode(from: valid))
         XCTAssertEqual(78, snapshot.batteryPercent)
         XCTAssertEqual(-53, snapshot.wifiRSSI)
+        XCTAssertTrue(snapshot.externalPower)
+
+        let legacy = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53}"#.data(using: .utf8)!
+        XCTAssertFalse(try XCTUnwrap(DeviceTelemetry.decode(from: legacy)).externalPower)
 
         let invalid = #"{"v":1,"event":"telemetry","bat":101,"rssi":-53}"#.data(using: .utf8)!
         XCTAssertNil(DeviceTelemetry.decode(from: invalid))

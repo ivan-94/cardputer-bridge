@@ -97,6 +97,18 @@ bool unsigned_value(
     return true;
 }
 
+bool optional_bool_value(
+    std::string_view object,
+    std::string_view key,
+    bool default_value
+) {
+    const std::size_t position = value_position(object, key);
+    if (position == std::string_view::npos) return default_value;
+    if (object.substr(position, 4) == "true") return true;
+    if (object.substr(position, 5) == "false") return false;
+    return default_value;
+}
+
 int base64_digit(char value) {
     if (value >= 'A' && value <= 'Z') return value - 'A';
     if (value >= 'a' && value <= 'z') return value - 'a' + 26;
@@ -244,15 +256,100 @@ bool is_release_version(std::string_view version) {
     return dots == 2 && component_digits > 0;
 }
 
+bool parse_ipv4_octet(std::string_view value, std::uint8_t& result) {
+    if (value.empty() || value.size() > 3 ||
+        (value.size() > 1 && value.front() == '0')) {
+        return false;
+    }
+    std::uint16_t parsed = 0;
+    for (const char digit : value) {
+        if (digit < '0' || digit > '9') return false;
+        parsed = static_cast<std::uint16_t>(parsed * 10 + digit - '0');
+        if (parsed > 255) return false;
+    }
+    result = static_cast<std::uint8_t>(parsed);
+    return true;
+}
+
+bool is_private_ipv4(std::string_view value) {
+    std::array<std::uint8_t, 4> octets{};
+    std::size_t start = 0;
+    for (std::size_t index = 0; index < octets.size(); ++index) {
+        const std::size_t dot = value.find('.', start);
+        const bool last = index + 1 == octets.size();
+        if ((last && dot != std::string_view::npos) ||
+            (!last && dot == std::string_view::npos)) {
+            return false;
+        }
+        const std::size_t end = last ? value.size() : dot;
+        if (!parse_ipv4_octet(value.substr(start, end - start), octets[index])) {
+            return false;
+        }
+        start = end + 1;
+    }
+    return octets[0] == 10 ||
+        (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] == 192 && octets[1] == 168);
+}
+
+bool is_lower_hex_token(std::string_view value) {
+    if (value.size() != 32) return false;
+    return std::all_of(value.begin(), value.end(), [](const char character) {
+        return (character >= '0' && character <= '9') ||
+            (character >= 'a' && character <= 'f');
+    });
+}
+
+bool is_trusted_local_relay_url(std::string_view url) {
+    constexpr std::string_view scheme = "http://";
+    constexpr std::string_view path_prefix = "/cardputer-bridge/";
+    constexpr std::string_view suffix = ".bin";
+    if (url.substr(0, scheme.size()) != scheme) return false;
+
+    const std::size_t path_start = url.find('/', scheme.size());
+    if (path_start == std::string_view::npos) return false;
+    const std::string_view authority = url.substr(
+        scheme.size(),
+        path_start - scheme.size()
+    );
+    const std::size_t colon = authority.find(':');
+    if (colon == std::string_view::npos ||
+        authority.find(':', colon + 1) != std::string_view::npos ||
+        !is_private_ipv4(authority.substr(0, colon))) {
+        return false;
+    }
+    std::uint64_t port = 0;
+    const std::string_view port_text = authority.substr(colon + 1);
+    if (port_text.empty() || (port_text.size() > 1 && port_text.front() == '0')) {
+        return false;
+    }
+    for (const char digit : port_text) {
+        if (digit < '0' || digit > '9') return false;
+        port = port * 10 + static_cast<std::uint64_t>(digit - '0');
+        if (port > 65535) return false;
+    }
+    if (port == 0) return false;
+
+    const std::string_view path = url.substr(path_start);
+    if (path.size() != path_prefix.size() + 32 + suffix.size() ||
+        path.substr(0, path_prefix.size()) != path_prefix ||
+        path.substr(path.size() - suffix.size()) != suffix) {
+        return false;
+    }
+    return is_lower_hex_token(path.substr(path_prefix.size(), 32));
+}
+
 bool is_trusted_ota_url(std::string_view url) {
     constexpr std::string_view prefix =
         "https://github.com/ivan-94/cardputer-bridge/releases/";
     constexpr std::string_view suffix = ".bin";
-    return url.size() > prefix.size() + suffix.size() &&
-        url.size() < 128 &&
+    if (url.size() >= 128 || url.find_first_of("\\?#%") != std::string_view::npos) {
+        return false;
+    }
+    const bool trusted_github = url.size() > prefix.size() + suffix.size() &&
         url.substr(0, prefix.size()) == prefix &&
-        url.substr(url.size() - suffix.size()) == suffix &&
-        url.find_first_of("\\?#%") == std::string_view::npos;
+        url.substr(url.size() - suffix.size()) == suffix;
+    return trusted_github || is_trusted_local_relay_url(url);
 }
 
 }  // namespace
@@ -439,6 +536,7 @@ bool parse_ota_start(std::string_view message, OTAStart& request) {
     OTAStart parsed{};
     std::copy(version.begin(), version.end(), parsed.version.begin());
     std::copy(url.begin(), url.end(), parsed.url.begin());
+    parsed.usb_power_verified = optional_bool_value(message, "usb", false);
     request = parsed;
     return true;
 }

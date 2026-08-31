@@ -1,10 +1,15 @@
 #include "firmware_update.hpp"
+#include "firmware_update_policy.hpp"
 
 #include <esp_app_desc.h>
 #include <esp_crt_bundle.h>
+#include <esp_heap_caps.h>
+#include <esp_http_client.h>
 #include <esp_https_ota.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
+#include <esp_tls.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -21,6 +26,9 @@ namespace {
 struct UpdateContext {
     OTAStart request{};
     FirmwareUpdateNotify notify = nullptr;
+    int esp_tls_code = 0;
+    int esp_tls_flags = 0;
+    std::uint8_t redirects = 0;
 };
 
 std::atomic_bool g_running{false};
@@ -74,6 +82,30 @@ bool is_strictly_newer(const char* candidate, const char* current) {
     return candidate_numbers > current_numbers;
 }
 
+esp_err_t http_event(esp_http_client_event_t* event) {
+    if (event == nullptr || event->user_data == nullptr) return ESP_OK;
+    auto* context = static_cast<UpdateContext*>(event->user_data);
+    if (event->event_id == HTTP_EVENT_REDIRECT) {
+        ++context->redirects;
+    } else if (event->event_id == HTTP_EVENT_DISCONNECTED &&
+               event->data != nullptr) {
+        (void)esp_tls_get_and_clear_last_error(
+            static_cast<esp_tls_error_handle_t>(event->data),
+            &context->esp_tls_code,
+            &context->esp_tls_flags
+        );
+    }
+    return ESP_OK;
+}
+
+FirmwareConnectFailure classify_connect_failure(esp_err_t result) {
+    return result == ESP_ERR_HTTP_CONNECT ||
+            result == ESP_ERR_HTTP_EAGAIN ||
+            result == ESP_ERR_TIMEOUT
+        ? FirmwareConnectFailure::kTransport
+        : FirmwareConnectFailure::kPermanent;
+}
+
 void update_task(void* argument) {
     auto* context = static_cast<UpdateContext*>(argument);
     const auto notify = context->notify;
@@ -83,15 +115,61 @@ void update_task(void* argument) {
     http_config.url = context->request.url.data();
     http_config.crt_bundle_attach = esp_crt_bundle_attach;
     http_config.timeout_ms = 15'000;
-    http_config.keep_alive_enable = true;
+    http_config.keep_alive_enable = false;
     http_config.max_redirection_count = 5;
+    http_config.event_handler = http_event;
+    http_config.user_data = context;
 
     esp_https_ota_config_t ota_config{};
     ota_config.http_config = &http_config;
 
     esp_https_ota_handle_t handle = nullptr;
-    esp_err_t result = esp_https_ota_begin(&ota_config, &handle);
+    esp_err_t result = ESP_FAIL;
+    wifi_ps_type_t previous_wifi_ps = WIFI_PS_MIN_MODEM;
+    const bool restore_wifi_ps = esp_wifi_get_ps(&previous_wifi_ps) == ESP_OK;
+    // Voice capture normally uses modem power save while muted. OTA needs a
+    // stable radio during DNS, TLS negotiation and redirect handling.
+    (void)esp_wifi_set_ps(WIFI_PS_NONE);
+    for (std::uint8_t attempt = 1; attempt <= 3; ++attempt) {
+        context->esp_tls_code = 0;
+        context->esp_tls_flags = 0;
+        context->redirects = 0;
+        const auto free_heap = esp_get_free_heap_size();
+        const auto largest_block = heap_caps_get_largest_free_block(
+            MALLOC_CAP_8BIT
+        );
+        std::printf(
+            "{\"v\":1,\"event\":\"ota_connect\",\"attempt\":%u,"
+            "\"free_heap\":%u,\"largest_block\":%u}\n",
+            static_cast<unsigned>(attempt),
+            static_cast<unsigned>(free_heap),
+            static_cast<unsigned>(largest_block)
+        );
+        result = esp_https_ota_begin(&ota_config, &handle);
+        if (result == ESP_OK) break;
+        if (handle != nullptr) {
+            (void)esp_https_ota_abort(handle);
+            handle = nullptr;
+        }
+        std::printf(
+            "{\"v\":1,\"event\":\"ota_connect_failed\","
+            "\"attempt\":%u,\"error\":%d,\"tls_code\":%d,"
+            "\"tls_flags\":%d,\"redirects\":%u}\n",
+            static_cast<unsigned>(attempt),
+            static_cast<int>(result),
+            context->esp_tls_code,
+            context->esp_tls_flags,
+            static_cast<unsigned>(context->redirects)
+        );
+        const auto delay_ms = firmware_connect_retry_delay_ms(
+            attempt,
+            classify_connect_failure(result)
+        );
+        if (delay_ms == 0) break;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
     if (result != ESP_OK) {
+        if (restore_wifi_ps) (void)esp_wifi_set_ps(previous_wifi_ps);
         publish(FirmwareUpdatePhase::kFailed, 0, result, notify);
         g_running.store(false, std::memory_order_release);
         delete context;
@@ -151,6 +229,7 @@ void update_task(void* argument) {
     }
 
     if (result != ESP_OK) {
+        if (restore_wifi_ps) (void)esp_wifi_set_ps(previous_wifi_ps);
         publish(FirmwareUpdatePhase::kFailed, 0, result, notify);
         g_running.store(false, std::memory_order_release);
         delete context;

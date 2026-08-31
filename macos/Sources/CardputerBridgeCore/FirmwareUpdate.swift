@@ -288,20 +288,23 @@ public enum FirmwareReleaseVerificationError: LocalizedError, Equatable {
 public struct FirmwareOTAStartMessage: Sendable {
     public let version: String
     public let url: String
+    public let usbPowerVerified: Bool
 
-    public init(version: String, url: String) {
+    public init(
+        version: String,
+        url: String,
+        usbPowerVerified: Bool = false
+    ) {
         self.version = version
         self.url = url
+        self.usbPowerVerified = usbPowerVerified
     }
 
     public func encoded() throws -> Data {
         guard FirmwareVersion(version) != nil else {
             throw FirmwareOTAStartMessageError.invalidVersion
         }
-        guard let parsedURL = URL(string: url),
-              parsedURL.scheme == "https",
-              parsedURL.host == "github.com",
-              parsedURL.path.hasPrefix("/ivan-94/cardputer-bridge/releases/") else {
+        guard Self.isTrustedURL(url) else {
             throw FirmwareOTAStartMessageError.untrustedURL
         }
         let encoder = JSONEncoder()
@@ -310,7 +313,8 @@ public struct FirmwareOTAStartMessage: Sendable {
             v: 1,
             type: "ota_start",
             version: version,
-            url: url
+            url: url,
+            usbPowerVerified: usbPowerVerified
         ))
         guard data.count <= 160 else {
             throw FirmwareOTAStartMessageError.messageTooLarge
@@ -318,17 +322,82 @@ public struct FirmwareOTAStartMessage: Sendable {
         return data
     }
 
+    private static func isTrustedURL(_ value: String) -> Bool {
+        guard value.utf8.count < 128,
+              value.rangeOfCharacter(from: CharacterSet(charactersIn: "\\?#%")) == nil,
+              let components = URLComponents(string: value),
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              let host = components.host else {
+            return false
+        }
+        if components.scheme == "https",
+           host == "github.com",
+           components.port == nil,
+           components.path.hasPrefix("/ivan-94/cardputer-bridge/releases/"),
+           components.path.hasSuffix(".bin") {
+            return true
+        }
+        guard components.scheme == "http",
+              let port = components.port,
+              (1...65_535).contains(port),
+              isPrivateIPv4(host) else {
+            return false
+        }
+        let prefix = "/cardputer-bridge/"
+        let suffix = ".bin"
+        guard components.path.hasPrefix(prefix),
+              components.path.hasSuffix(suffix) else {
+            return false
+        }
+        let tokenStart = components.path.index(
+            components.path.startIndex,
+            offsetBy: prefix.count
+        )
+        let tokenEnd = components.path.index(
+            components.path.endIndex,
+            offsetBy: -suffix.count
+        )
+        let token = components.path[tokenStart..<tokenEnd]
+        return token.utf8.count == 32 && token.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
+    }
+
+    private static func isPrivateIPv4(_ host: String) -> Bool {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        var octets: [UInt8] = []
+        for part in parts {
+            guard !part.isEmpty,
+                  part.count <= 3,
+                  (part.count == 1 || part.first != "0"),
+                  part.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+                  let value = UInt8(part) else {
+                return false
+            }
+            octets.append(value)
+        }
+        return octets[0] == 10 ||
+            (octets[0] == 172 && (16...31).contains(octets[1])) ||
+            (octets[0] == 192 && octets[1] == 168)
+    }
+
     private struct Wire: Encodable {
         let v: Int
         let type: String
         let version: String
         let url: String
+        let usbPowerVerified: Bool
 
         private enum CodingKeys: String, CodingKey {
             case v
             case type
             case version = "ver"
             case url
+            case usbPowerVerified = "usb"
         }
     }
 }
@@ -344,6 +413,39 @@ public enum FirmwareInstallPlan: Equatable, Sendable {
     case usbMigrationRequired(targetVersion: String)
     case otaAvailable(currentVersion: String, targetVersion: String)
     case incompatible(reason: String)
+}
+
+public enum FirmwareOTAReadiness: Equatable, Sendable {
+    case ready
+    case telemetryUnavailable
+    case wifiUnavailable
+    case lowBattery(percent: Int)
+    case weakWiFi(rssi: Int)
+}
+
+public enum FirmwareOTAPreflightPolicy {
+    public static let minimumBatteryPercent = 30
+    public static let minimumWiFiRSSI = -80
+
+    public static func evaluate(
+        _ telemetry: DeviceTelemetry?,
+        usbPowerVerified: Bool = false
+    ) -> FirmwareOTAReadiness {
+        guard let telemetry else { return .telemetryUnavailable }
+        guard telemetry.wifiRSSI != 0 else { return .wifiUnavailable }
+        let hasExternalPower = telemetry.externalPower || usbPowerVerified
+        guard hasExternalPower || telemetry.batteryPercent >= 0 else {
+            return .telemetryUnavailable
+        }
+        guard hasExternalPower ||
+                telemetry.batteryPercent >= minimumBatteryPercent else {
+            return .lowBattery(percent: telemetry.batteryPercent)
+        }
+        guard telemetry.wifiRSSI >= minimumWiFiRSSI else {
+            return .weakWiFi(rssi: telemetry.wifiRSSI)
+        }
+        return .ready
+    }
 }
 
 public enum FirmwareUpdatePolicy {

@@ -159,6 +159,33 @@ public struct DeviceTelemetry: Codable, Equatable, Sendable {
     public let event: String
     public let batteryPercent: Int
     public let wifiRSSI: Int
+    public let externalPower: Bool
+
+    public init(
+        v: Int = 1,
+        event: String = "telemetry",
+        batteryPercent: Int,
+        wifiRSSI: Int,
+        externalPower: Bool = false
+    ) {
+        self.v = v
+        self.event = event
+        self.batteryPercent = batteryPercent
+        self.wifiRSSI = wifiRSSI
+        self.externalPower = externalPower
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        v = try container.decode(Int.self, forKey: .v)
+        event = try container.decode(String.self, forKey: .event)
+        batteryPercent = try container.decode(Int.self, forKey: .batteryPercent)
+        wifiRSSI = try container.decode(Int.self, forKey: .wifiRSSI)
+        externalPower = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .externalPower
+        ) ?? false
+    }
 
     public static func decode(from data: Data) -> Self? {
         guard let value = try? JSONDecoder().decode(Self.self, from: data),
@@ -174,5 +201,6 @@ public struct DeviceTelemetry: Codable, Equatable, Sendable {
         case event
         case batteryPercent = "bat"
         case wifiRSSI = "rssi"
+        case externalPower = "ext"
     }
 }
