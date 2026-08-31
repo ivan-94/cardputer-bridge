@@ -105,10 +105,18 @@ class MacOSReleaseContractTests(unittest.TestCase):
 
     def test_release_cross_checks_manifest_with_macos_trust_path(self) -> None:
         workflow = (PROJECT / ".github/workflows/release.yml").read_text()
+        firmware_update_tests = (
+            PROJECT
+            / "macos/Tests/CardputerBridgeCoreTests/FirmwareUpdateTests.swift"
+        ).read_text()
 
         self.assertIn("manifest-compatibility:", workflow)
         self.assertIn("CARDPUTER_RELEASE_MANIFEST_PATH", workflow)
         self.assertIn("testExternalProductionManifestWhenProvided", workflow)
+        self.assertIn(
+            'appending(path: ".release/cardputer-bridge-release.json")',
+            firmware_update_tests,
+        )
 
     def test_release_builder_creates_verified_drag_install_dmg(self) -> None:
         script = (PROJECT / "scripts/build-macos-release.sh").read_text()

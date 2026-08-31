@@ -143,14 +143,29 @@ final class FirmwareUpdateTests: XCTestCase {
     }
 
     func testExternalProductionManifestWhenProvided() throws {
-        guard let path = ProcessInfo.processInfo.environment[
+        let environmentPath = ProcessInfo.processInfo.environment[
             "CARDPUTER_RELEASE_MANIFEST_PATH"
-        ] else {
+        ]
+        let repositoryManifest = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: ".release/cardputer-bridge-release.json")
+        let manifestURL: URL?
+        if let environmentPath {
+            manifestURL = URL(fileURLWithPath: environmentPath)
+        } else if FileManager.default.fileExists(atPath: repositoryManifest.path) {
+            manifestURL = repositoryManifest
+        } else {
+            manifestURL = nil
+        }
+        guard let manifestURL else {
             throw XCTSkip("No external release manifest was provided.")
         }
         let manifest = try JSONDecoder().decode(
             SignedFirmwareRelease.self,
-            from: Data(contentsOf: URL(fileURLWithPath: path))
+            from: Data(contentsOf: manifestURL)
         )
         XCTAssertNoThrow(
             try manifest.verify(trustedKeys: FirmwareReleaseTrust.productionKeys)
