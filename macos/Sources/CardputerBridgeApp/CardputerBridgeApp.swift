@@ -450,13 +450,17 @@ private struct BridgeRootView: View {
                                 Text(systemInputSummary)
                                     .foregroundStyle(BridgeTheme.secondaryText)
                             }
+                            Spacer()
+                            Text(deviceBatteryText)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(BridgeTheme.secondaryText)
                         }
 
                         HStack(spacing: 18) {
                             overviewStatus("键盘", value: keyboardStatus, detail: "直接输入 Mac")
-                            overviewStatus("麦克风", value: systemMicrophonePipelineReady ? "系统可用" : "未就绪", detail: microphoneNetworkSummary)
+                            overviewStatus("麦克风", value: overviewMicrophoneStatus, detail: microphoneNetworkSummary)
                             overviewStatus("快捷键", value: shortcutConfigurationIsSynced ? "已同步" : "待同步", detail: "按下即可触发")
-                            overviewStatus("设备", value: deviceBatteryText, detail: deviceSignalText)
+                            overviewStatus("Wi-Fi", value: overviewWiFiStatus, detail: deviceWiFiConnected ? deviceSignalText : "无线麦克风通道")
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -466,6 +470,31 @@ private struct BridgeRootView: View {
                 }
                 .padding(22)
                 .bridgePanel(border: bothSystemInputsReady ? BridgeTheme.success.opacity(0.25) : BridgeTheme.border)
+
+                if bluetooth.state.phase == .ready && !deviceWiFiConnected {
+                    HStack(spacing: 14) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.title2)
+                            .foregroundStyle(BridgeTheme.warning)
+                            .frame(width: 42, height: 42)
+                            .background(BridgeTheme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("连接 Wi-Fi，启用无线麦克风")
+                                .font(.headline)
+                            Text("键盘已通过 BLE 可用；麦克风音频需要通过 2.4 GHz Wi-Fi 传输。")
+                                .font(.caption)
+                                .foregroundStyle(BridgeTheme.secondaryText)
+                        }
+                        Spacer()
+                        Button("连接 Wi-Fi") {
+                            selectedSection = .microphone
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("overview-connect-wifi")
+                    }
+                    .padding(16)
+                    .bridgePanel(border: BridgeTheme.warning.opacity(0.4))
+                }
 
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 12) {
@@ -1225,90 +1254,24 @@ private struct BridgeRootView: View {
 
     private var onboardingWiFiSetupCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Menu {
-                    if nearbyWiFi.networks.isEmpty {
-                        Text(nearbyWiFi.isScanning ? "正在扫描…" : "未发现附近网络")
-                    } else {
-                        ForEach(nearbyWiFi.networks) { network in
-                            Button {
-                                wifiSSID = network.ssid
-                                wifiPassword = ""
-                                isEnteringHiddenWiFi = false
-                                wifiProvisioningPhase = .idle
-                            } label: {
-                                Label(
-                                    "\(network.ssid) · 信道 \(network.channel)",
-                                    systemImage: network.signalSymbol
-                                )
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("其他网络…") {
-                        wifiSSID = ""
-                        wifiPassword = ""
-                        isEnteringHiddenWiFi = true
-                        wifiProvisioningPhase = .idle
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "wifi")
-                            .foregroundStyle(BridgeTheme.accent)
-                        Text(wifiSSID.isEmpty ? "选择 2.4 GHz Wi-Fi" : wifiSSID)
-                            .foregroundStyle(
-                                wifiSSID.isEmpty
-                                    ? BridgeTheme.secondaryText
-                                    : BridgeTheme.primaryText
-                            )
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(BridgeTheme.secondaryText)
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(
-                        BridgeTheme.background,
-                        in: RoundedRectangle(cornerRadius: 10)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(BridgeTheme.border)
-                    )
+            WiFiNetworkPicker(
+                nearbyWiFi: nearbyWiFi,
+                selectedSSID: wifiSSID,
+                accessibilityPrefix: "onboarding",
+                onSelectNetwork: { ssid in
+                    wifiSSID = ssid
+                    wifiPassword = ""
+                    isEnteringHiddenWiFi = false
+                    wifiProvisioningPhase = .idle
+                },
+                onChooseOtherNetwork: {
+                    wifiSSID = ""
+                    wifiPassword = ""
+                    isEnteringHiddenWiFi = true
+                    wifiProvisioningPhase = .idle
                 }
-                .menuStyle(.borderlessButton)
-                .accessibilityIdentifier("onboarding-wifi-menu")
-
-                Button {
-                    nearbyWiFi.scan()
-                } label: {
-                    if nearbyWiFi.isScanning {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .help("重新扫描附近的 2.4 GHz Wi-Fi")
-                .disabled(nearbyWiFi.isScanning)
-                .accessibilityIdentifier("onboarding-wifi-rescan")
-            }
-
-            if nearbyWiFi.isScanning {
-                Text("正在扫描附近的 2.4 GHz 网络…")
-                    .font(.caption)
-                    .foregroundStyle(BridgeTheme.secondaryText)
-            } else if let fault = nearbyWiFi.fault {
-                Text(fault)
-                    .font(.caption)
-                    .foregroundStyle(BridgeTheme.warning)
-            } else if nearbyWiFi.networks.isEmpty {
-                Text("没有发现网络。可以重新扫描，或从菜单选择“其他网络…”。")
-                    .font(.caption)
-                    .foregroundStyle(BridgeTheme.secondaryText)
-            }
+            )
+            .accessibilityIdentifier("onboarding-wifi-picker")
 
             if isEnteringHiddenWiFi {
                 TextField("Wi-Fi 名称", text: $wifiSSID)
@@ -1478,6 +1441,7 @@ private struct BridgeRootView: View {
                             wifiSSID = currentWiFiName
                         }
                         isEditingWiFi.toggle()
+                        isEnteringHiddenWiFi = false
                         wifiPassword = ""
                     }
                     .buttonStyle(.bordered)
@@ -1486,43 +1450,27 @@ private struct BridgeRootView: View {
 
             if !deviceWiFiConnected || isEditingWiFi {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        if nearbyWiFi.networks.isEmpty {
-                            Text("选择附近的 2.4 GHz 网络，或手动输入名称。")
-                                .font(.caption)
-                                .foregroundStyle(BridgeTheme.secondaryText)
-                        } else {
-                            Menu {
-                                ForEach(nearbyWiFi.networks) { network in
-                                    Button {
-                                        wifiSSID = network.ssid
-                                    } label: {
-                                        Label(
-                                            "\(network.ssid) · 信道 \(network.channel)",
-                                            systemImage: network.signalSymbol
-                                        )
-                                    }
-                                }
-                            } label: {
-                                Label("选择附近网络", systemImage: "wifi")
-                            }
-                            .menuStyle(.borderlessButton)
+                    WiFiNetworkPicker(
+                        nearbyWiFi: nearbyWiFi,
+                        selectedSSID: wifiSSID,
+                        accessibilityPrefix: "microphone",
+                        onSelectNetwork: { ssid in
+                            wifiSSID = ssid
+                            wifiPassword = ""
+                            isEnteringHiddenWiFi = false
+                        },
+                        onChooseOtherNetwork: {
+                            wifiSSID = ""
+                            wifiPassword = ""
+                            isEnteringHiddenWiFi = true
                         }
-                        Spacer()
-                        Button {
-                            nearbyWiFi.scan()
-                        } label: {
-                            if nearbyWiFi.isScanning {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Label(nearbyWiFi.networks.isEmpty ? "扫描" : "重新扫描", systemImage: "arrow.clockwise")
-                            }
-                        }
-                        .disabled(nearbyWiFi.isScanning)
-                    }
+                    )
+                    .accessibilityIdentifier("microphone-wifi-picker")
 
-                    TextField("2.4 GHz Wi-Fi 名称", text: $wifiSSID)
-                        .accessibilityIdentifier("wifi-ssid-input")
+                    if isEnteringHiddenWiFi {
+                        TextField("Wi-Fi 名称", text: $wifiSSID)
+                            .accessibilityIdentifier("wifi-ssid-input")
+                    }
                     SecureField("Wi-Fi 密码", text: $wifiPassword)
                         .accessibilityIdentifier("wifi-password-input")
                     HStack {
@@ -1537,11 +1485,6 @@ private struct BridgeRootView: View {
                         .disabled(
                             wifiSSID.isEmpty || wifiPassword.count < 8 || audio.offer == nil
                         )
-                    }
-                    if let fault = nearbyWiFi.fault {
-                        Text(fault)
-                            .font(.caption)
-                            .foregroundStyle(BridgeTheme.warning)
                     }
                 }
                 .textFieldStyle(.roundedBorder)
@@ -1645,10 +1588,22 @@ private struct BridgeRootView: View {
     }
 
     private var microphoneNetworkSummary: String {
-        deviceWiFiConnected ? currentWiFiName : "等待网络"
+        deviceWiFiConnected ? currentWiFiName : "需连接 2.4 GHz"
+    }
+
+    private var overviewMicrophoneStatus: String {
+        guard systemMicrophonePipelineReady else { return "未就绪" }
+        return deviceWiFiConnected ? "可用" : "待联网"
+    }
+
+    private var overviewWiFiStatus: String {
+        deviceWiFiConnected ? currentWiFiName : "未连接"
     }
 
     private var microphoneOverviewDetail: String {
+        guard deviceWiFiConnected else {
+            return "先连接 2.4 GHz Wi-Fi。"
+        }
         guard systemMicrophonePipelineReady else {
             return "完成首次设置后即可使用。"
         }
@@ -1784,14 +1739,22 @@ private struct BridgeRootView: View {
             Button("连接") { bluetooth.connect() }
                 .buttonStyle(.borderedProminent)
         case .ready:
-            Button(bluetooth.micIntent == "live" ? "静音" : "开启麦克风") {
-                bluetooth.toggleMicrophoneIntent()
+            if deviceWiFiConnected {
+                Button(bluetooth.micIntent == "live" ? "静音" : "开启麦克风") {
+                    bluetooth.toggleMicrophoneIntent()
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("microphone-toggle")
+                .accessibilityLabel(
+                    bluetooth.micIntent == "live" ? "静音" : "开启麦克风"
+                )
+            } else {
+                Button("连接 Wi-Fi") {
+                    selectedSection = .microphone
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("microphone-connect-wifi")
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("microphone-toggle")
-            .accessibilityLabel(
-                bluetooth.micIntent == "live" ? "静音" : "开启麦克风"
-            )
         case .blocked where bluetooth.state.radio == .unauthorized:
             Button("打开隐私设置") {
                 openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")!)
@@ -1846,7 +1809,7 @@ private struct BridgeRootView: View {
         case .connecting: "正在连接"
         case .discoveringServices: "正在连接"
         case .authenticating: "等待安全配对"
-        case .ready: "已连接"
+        case .ready: bothSystemInputsReady ? "全部可用" : "部分可用"
         case .blocked: "蓝牙不可用"
         case .failed: "连接失败"
         }
@@ -1854,7 +1817,7 @@ private struct BridgeRootView: View {
 
     private var statusColor: Color {
         switch bluetooth.state.phase {
-        case .ready: .green
+        case .ready: bothSystemInputsReady ? BridgeTheme.success : BridgeTheme.warning
         case .deviceFound, .connecting, .discoveringServices, .authenticating: .orange
         case .blocked, .failed: .red
         case .waitingForBluetooth, .scanning: .secondary
@@ -1863,7 +1826,7 @@ private struct BridgeRootView: View {
 
     private var statusIcon: String {
         switch bluetooth.state.phase {
-        case .ready: "checkmark.circle.fill"
+        case .ready: bothSystemInputsReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
         case .blocked, .failed: "exclamationmark.circle.fill"
         case .scanning, .connecting, .discoveringServices, .authenticating: "antenna.radiowaves.left.and.right"
         case .waitingForBluetooth, .deviceFound: "circle.fill"
@@ -1876,13 +1839,14 @@ private struct BridgeRootView: View {
     }
 
     private var bothSystemInputsReady: Bool {
-        bluetooth.hidConnected && systemMicrophonePipelineReady
+        bluetooth.hidConnected && systemMicrophonePipelineReady && deviceWiFiConnected
     }
 
     private var systemInputSummary: String {
         if bothSystemInputsReady { return "键盘和系统麦克风均可用" }
+        if bluetooth.hidConnected && !deviceWiFiConnected { return "键盘可用，麦克风待联网" }
         if bluetooth.hidConnected { return "键盘可用，麦克风未就绪" }
-        if systemMicrophonePipelineReady { return "麦克风可用，键盘未就绪" }
+        if systemMicrophonePipelineReady && deviceWiFiConnected { return "麦克风可用，键盘未就绪" }
         return statusText
     }
 
@@ -1892,6 +1856,9 @@ private struct BridgeRootView: View {
         }
         if !bluetooth.hidConnected {
             return "Cardputer 键盘尚未连接。"
+        }
+        if !deviceWiFiConnected {
+            return "连接 2.4 GHz Wi-Fi 后即可使用 Cardputer Microphone。"
         }
         return "Cardputer Microphone 尚未就绪。"
     }
@@ -2541,6 +2508,164 @@ private final class GlobalShortcutEventTap {
     private func finish(with result: ShortcutCaptureResult) {
         onCapture(result)
         stop()
+    }
+}
+
+private struct WiFiNetworkPicker: View {
+    @ObservedObject var nearbyWiFi: NearbyWiFiController
+    let selectedSSID: String
+    let accessibilityPrefix: String
+    let onSelectNetwork: (String) -> Void
+    let onChooseOtherNetwork: () -> Void
+
+    @State private var isPresented = false
+    @State private var searchText = ""
+
+    var body: some View {
+        Button {
+            if isPresented {
+                isPresented = false
+            } else {
+                searchText = ""
+                isPresented = true
+                nearbyWiFi.scan()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "wifi")
+                    .foregroundStyle(BridgeTheme.accent)
+                Text(selectedSSID.isEmpty ? "选择 2.4 GHz Wi-Fi" : selectedSSID)
+                    .foregroundStyle(
+                        selectedSSID.isEmpty
+                            ? BridgeTheme.secondaryText
+                            : BridgeTheme.primaryText
+                    )
+                    .lineLimit(1)
+                Spacer()
+                if nearbyWiFi.isScanning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BridgeTheme.secondaryText)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(BridgeTheme.background, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(BridgeTheme.border))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("\(accessibilityPrefix)-wifi-picker-button")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(BridgeTheme.secondaryText)
+                    TextField("搜索 Wi-Fi", text: $searchText)
+                        .textFieldStyle(.plain)
+                    Button {
+                        nearbyWiFi.scan()
+                    } label: {
+                        if nearbyWiFi.isScanning {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("重新扫描附近的 2.4 GHz Wi-Fi")
+                    .disabled(nearbyWiFi.isScanning)
+                    .accessibilityIdentifier("\(accessibilityPrefix)-wifi-rescan")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+                .background(BridgeTheme.background, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(BridgeTheme.border))
+
+                if let fault = nearbyWiFi.fault {
+                    Label(fault, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(BridgeTheme.warning)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if nearbyWiFi.isScanning && nearbyWiFi.networks.isEmpty {
+                    Label("正在扫描附近的 2.4 GHz 网络…", systemImage: "wifi")
+                        .font(.caption)
+                        .foregroundStyle(BridgeTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if filteredNetworks.isEmpty {
+                    Text(searchText.isEmpty ? "未发现附近网络" : "没有匹配的网络")
+                        .font(.caption)
+                        .foregroundStyle(BridgeTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(filteredNetworks) { network in
+                                Button {
+                                    onSelectNetwork(network.ssid)
+                                    searchText = ""
+                                    isPresented = false
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: network.signalSymbol)
+                                            .foregroundStyle(BridgeTheme.success)
+                                            .frame(width: 18)
+                                        Text(network.ssid)
+                                            .foregroundStyle(BridgeTheme.primaryText)
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text("信道 \(network.channel)")
+                                            .font(.caption)
+                                            .foregroundStyle(BridgeTheme.secondaryText)
+                                        if network.ssid == selectedSSID {
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(BridgeTheme.accent)
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 36)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                }
+
+                Divider()
+                Button {
+                    onChooseOtherNetwork()
+                    searchText = ""
+                    isPresented = false
+                } label: {
+                    Label("其他网络…", systemImage: "keyboard")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .frame(width: 420)
+            .background(BridgeTheme.surface)
+            .preferredColorScheme(.dark)
+        }
+        .onChange(of: isPresented) { _, presented in
+            if !presented {
+                searchText = ""
+            }
+        }
+    }
+
+    private var filteredNetworks: [NearbyWiFiNetwork] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nearbyWiFi.networks }
+        return nearbyWiFi.networks.filter {
+            $0.ssid.localizedCaseInsensitiveContains(query)
+        }
     }
 }
 

@@ -105,15 +105,31 @@ def main() -> int:
         and "return false" in app_source,
         "menu bar microphone control": "toggleMicrophoneFromStatusItem" in app_source,
         "2.4 GHz Wi-Fi scan": "scanForNetworks" in wifi_source
-        and "channel.channelNumber <= 14" in wifi_source
-        and "选择附近网络" in app_source,
+        and "channel.channelBand == .band2GHz" in wifi_source
+        and "WiFiNetworkPicker" in app_source,
+        "Wi-Fi scan requests macOS location access":
+            "import CoreLocation" in wifi_source
+            and "CLLocationManagerDelegate" in wifi_source
+            and "requestWhenInUseAuthorization" in wifi_source
+            and "locationManagerDidChangeAuthorization" in wifi_source
+            and "authorizationStatus" in wifi_source,
+        "onboarding and microphone share searchable Wi-Fi picker":
+            app_source.count("WiFiNetworkPicker(") == 2
+            and 'TextField("搜索 Wi-Fi", text: $searchText)' in app_source
+            and 'accessibilityIdentifier("onboarding-wifi-picker")' in app_source
+            and 'accessibilityIdentifier("microphone-wifi-picker")' in app_source,
         "onboarding Wi-Fi uses discovery and a selectable menu":
             "onboardingWiFiSetupCard" in app_source
-            and "onboarding-wifi-menu" in app_source
-            and "onboarding-wifi-rescan" in app_source
-            and "ForEach(nearbyWiFi.networks)" in app_source
-            and 'Button("其他网络…")' in app_source
+            and "onboarding-wifi-picker" in app_source
+            and '"\\(accessibilityPrefix)-wifi-rescan"' in app_source
+            and "ForEach(filteredNetworks)" in app_source
+            and 'Label("其他网络…", systemImage: "keyboard")' in app_source
             and "setupStep == 3, nearbyWiFi.networks.isEmpty" in app_source,
+        "overview foregrounds Wi-Fi as a core channel":
+            'overviewStatus("Wi-Fi"' in app_source
+            and 'Text("连接 Wi-Fi，启用无线麦克风")' in app_source
+            and 'accessibilityIdentifier("overview-connect-wifi")' in app_source
+            and 'case .ready: bothSystemInputsReady ? "全部可用" : "部分可用"' in app_source,
         "onboarding Wi-Fi reports progress and failure":
             "WiFiProvisioningPhase" in app_source
             and 'Text("正在连接…")' in app_source
