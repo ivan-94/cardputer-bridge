@@ -12,6 +12,10 @@ def main() -> int:
     commit_begin = source.index("esp_err_t device_audio_commit_wifi()")
     commit_end = source.index("\n}\n\nbool device_audio_apply_offer", commit_begin)
     commit_source = source[commit_begin:commit_end]
+    capture_source = source[
+        source.index("void audio_capture_task(void*)"):
+        source.index("void audio_transport_task(void*)")
+    ]
     required = {
         "capture clock matches the 16 kHz wire clock": (
             "kM5UnifiedCaptureRequestRate" not in source
@@ -31,9 +35,23 @@ def main() -> int:
             "esp_wifi_set_ps(enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM)" in source
             and "s_capture_enabled.exchange" in source
         ),
-        "capture overlaps transport": (
-            "recording stays gapless" in source
-            and '"audio_tx",\n        8192,\n        nullptr,\n        1,' in source
+        "capture is isolated from reliable transport": (
+            "s_capture_ring.try_push(frame)" in capture_source
+            and "send(" not in capture_source
+            and "connect(" not in capture_source
+            and "psa_aead_encrypt" not in capture_source
+            and '"audio_capture"' in source
+            and '"audio_stream"' in source
+            and "kCaptureTaskPriority = 8" in source
+            and "kTransportTaskPriority = 4" in source
+        ),
+        "transport is ordered bounded TCP": (
+            "SOCK_STREAM" in source
+            and "IPPROTO_TCP" in source
+            and "TCP_NODELAY" in source
+            and "SO_SNDTIMEO" in source
+            and source.count("if (setsockopt(") >= 2
+            and "kCaptureRingFrames = 20" in source
         ),
         "real signal level is measured": "s_signal_level.store" in source,
         "inactive audio task blocks until work arrives": (
@@ -64,7 +82,7 @@ def main() -> int:
     if failures:
         print("FAIL device audio policy: " + ", ".join(failures), file=sys.stderr)
         return 1
-    print("PASS device_audio_clock_locked_unity_gain_double_buffered_and_metered")
+    print("PASS device_audio_clock_locked_split_capture_tcp_stream_and_metered")
     return 0
 
 

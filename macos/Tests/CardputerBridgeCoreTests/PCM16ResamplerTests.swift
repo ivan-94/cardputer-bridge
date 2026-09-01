@@ -14,6 +14,19 @@ final class PCM16ResamplerTests: XCTestCase {
         XCTAssertEqual(output[1_000], 0.125, accuracy: 0.005)
     }
 
+    func testRepeatedTenMillisecondFramesKeepExactClockRatio() throws {
+        let resampler = try PCM16ToFloat32Resampler(outputGain: 1)
+        let input = Array(repeating: Int16(4_096), count: 160)
+            .withUnsafeBytes { Data($0) }
+
+        let frameCounts = try (0..<100).map { _ in
+            try resampler.convert(input).count
+        }
+
+        XCTAssertEqual(Array(repeating: 480, count: 100), frameCounts)
+        XCTAssertEqual(48_000, frameCounts.reduce(0, +))
+    }
+
     func testRaisesSpeechLevelAndKeepsPeaksInsideFloatRange() throws {
         let resampler = try PCM16ToFloat32Resampler(outputGain: 2)
         let quiet = Array(repeating: Int16(3_276), count: 320)

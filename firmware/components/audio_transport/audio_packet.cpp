@@ -5,7 +5,7 @@
 namespace cardbridge {
 namespace {
 
-constexpr std::uint8_t kMagic[] = {'C', 'B', 'R', '1'};
+constexpr std::uint8_t kMagic[] = {'C', 'B', 'S', '1'};
 constexpr std::uint8_t kVersion = 1;
 
 void write_u16(std::uint8_t* output, std::uint16_t value) {

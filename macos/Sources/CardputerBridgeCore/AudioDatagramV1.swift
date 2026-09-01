@@ -21,7 +21,7 @@ public struct AudioFrameV1: Equatable, Sendable {
     public let pcm16: Data
 }
 
-public enum AudioDatagramError: Error, Equatable {
+public enum AudioStreamError: Error, Equatable {
     case invalidLength
     case invalidHeader
     case invalidFrameShape
@@ -29,12 +29,12 @@ public enum AudioDatagramError: Error, Equatable {
     case authenticationFailed
 }
 
-public enum AudioDatagramV1 {
+public enum AudioStreamFrameV1 {
     public static let headerBytes = 28
-    public static let frameSamples = 320
-    public static let payloadBytes = 640
+    public static let frameSamples = 160
+    public static let payloadBytes = 320
     public static let tagBytes = 16
-    public static let datagramBytes = headerBytes + payloadBytes + tagBytes
+    public static let frameBytes = headerBytes + payloadBytes + tagBytes
 
     public static func seal(
         pcm16: Data,
@@ -45,7 +45,7 @@ public enum AudioDatagramV1 {
         key: SymmetricKey
     ) throws -> Data {
         guard pcm16.count == payloadBytes else {
-            throw AudioDatagramError.invalidFrameShape
+            throw AudioStreamError.invalidFrameShape
         }
         let header = makeHeader(
             flags: flags,
@@ -67,32 +67,32 @@ public enum AudioDatagramV1 {
     }
 
     public static func open(
-        _ datagram: Data,
+        _ encryptedFrame: Data,
         expectedSessionID: UInt64,
         key: SymmetricKey
     ) throws -> AudioFrameV1 {
-        guard datagram.count == datagramBytes else {
-            throw AudioDatagramError.invalidLength
+        guard encryptedFrame.count == frameBytes else {
+            throw AudioStreamError.invalidLength
         }
-        let header = datagram.prefix(headerBytes)
-        guard header.prefix(4) == Data("CBR1".utf8),
+        let header = encryptedFrame.prefix(headerBytes)
+        guard header.prefix(4) == Data("CBS1".utf8),
               header[4] == 1,
               readUInt16(header, at: 6) == headerBytes else {
-            throw AudioDatagramError.invalidHeader
+            throw AudioStreamError.invalidHeader
         }
         let sessionID = readUInt64(header, at: 8)
         guard sessionID == expectedSessionID else {
-            throw AudioDatagramError.sessionMismatch
+            throw AudioStreamError.sessionMismatch
         }
         guard readUInt16(header, at: 24) == frameSamples,
               readUInt16(header, at: 26) == payloadBytes else {
-            throw AudioDatagramError.invalidFrameShape
+            throw AudioStreamError.invalidFrameShape
         }
         let sequence = readUInt32(header, at: 16)
         let ciphertextStart = headerBytes
         let tagStart = headerBytes + payloadBytes
-        let ciphertext = datagram[ciphertextStart..<tagStart]
-        let tag = datagram[tagStart..<datagramBytes]
+        let ciphertext = encryptedFrame[ciphertextStart..<tagStart]
+        let tag = encryptedFrame[tagStart..<frameBytes]
         do {
             let nonce = try AES.GCM.Nonce(data: makeNonce(
                 sessionID: sessionID,
@@ -116,7 +116,7 @@ public enum AudioDatagramV1 {
                 pcm16: pcm
             )
         } catch {
-            throw AudioDatagramError.authenticationFailed
+            throw AudioStreamError.authenticationFailed
         }
     }
 
@@ -126,7 +126,7 @@ public enum AudioDatagramV1 {
         sequence: UInt32,
         captureSampleIndex: UInt32
     ) -> Data {
-        var result = Data("CBR1".utf8)
+        var result = Data("CBS1".utf8)
         result.append(1)
         result.append(flags.rawValue)
         append(UInt16(headerBytes), to: &result)
@@ -160,5 +160,27 @@ public enum AudioDatagramV1 {
 
     private static func readUInt64(_ data: Data.SubSequence, at offset: Int) -> UInt64 {
         data[offset..<(offset + 8)].reduce(0) { ($0 << 8) | UInt64($1) }
+    }
+}
+
+public struct AudioStreamFramer: Sendable {
+    public let frameBytes: Int
+    public private(set) var bufferedBytes = 0
+    private var buffer = Data()
+
+    public init(frameBytes: Int) {
+        precondition(frameBytes > 0)
+        self.frameBytes = frameBytes
+    }
+
+    public mutating func append<S: DataProtocol>(_ bytes: S) -> [Data] {
+        buffer.append(contentsOf: bytes)
+        var frames: [Data] = []
+        while buffer.count >= frameBytes {
+            frames.append(Data(buffer.prefix(frameBytes)))
+            buffer.removeFirst(frameBytes)
+        }
+        bufferedBytes = buffer.count
+        return frames
     }
 }

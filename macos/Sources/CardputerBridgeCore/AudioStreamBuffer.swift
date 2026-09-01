@@ -1,29 +1,24 @@
 import Foundation
 
-public struct AudioJitterBatch: Equatable, Sendable {
+public struct AudioStreamBatch: Equatable, Sendable {
     public let pcm16: Data
     public let frameCount: Int
 }
 
-/// A 40 ms reorder window followed by a 60 ms startup reservoir.
-///
-/// The virtual microphone ring receives the startup reservoir in one write,
-/// so Core Audio cannot start consuming a nearly empty stream. Once started,
-/// packets remain two frames behind the newest authenticated packet. A packet
-/// that is still absent at that point is replaced with a short fade to silence.
-public struct AudioJitterBuffer: Sendable {
+/// Buffers only the first 30 ms needed to start the Core Audio producer with
+/// headroom. TCP already provides ordering and retransmission, so steady-state
+/// frames are released immediately instead of waiting in a jitter window.
+public struct AudioStreamBuffer: Sendable {
     public let sessionID: UInt64
     public private(set) var metrics = AudioStreamMetrics()
 
-    private static let samplesPerFrame = 320
-    private static let bytesPerFrame = samplesPerFrame * MemoryLayout<Int16>.size
-    private static let reorderDepth: UInt32 = 2
+    private static let samplesPerFrame = AudioStreamFrameV1.frameSamples
+    private static let bytesPerFrame = AudioStreamFrameV1.payloadBytes
     private static let startupFrameCount = 3
-    private static let fadeSamples = 80
+    private static let fadeSamples = 40
+    private static let maximumConcealedGapFrames = 50
 
-    private var pending: [UInt32: Data] = [:]
-    private var nextSequence: UInt32?
-    private var highestSequence: UInt32?
+    private var expectedSequence: UInt32?
     private var startupReservoir = Data()
     private var startupReservoirFrames = 0
     private var started = false
@@ -37,49 +32,40 @@ public struct AudioJitterBuffer: Sendable {
         )
     }
 
-    public mutating func push(_ frame: AudioFrameV1) -> AudioJitterBatch? {
+    public mutating func push(_ frame: AudioFrameV1) -> AudioStreamBatch? {
         guard frame.sessionID == sessionID,
               frame.pcm16.count == Self.bytesPerFrame else {
             return nil
         }
-        if let nextSequence, frame.sequence < nextSequence {
-            metrics.duplicateOrLatePackets += 1
-            return nil
-        }
-        guard pending[frame.sequence] == nil else {
+        if let expectedSequence, frame.sequence < expectedSequence {
             metrics.duplicateOrLatePackets += 1
             return nil
         }
 
-        if nextSequence == nil {
-            nextSequence = frame.sequence
+        var ready = Data()
+        var readyFrames = 0
+        if let expectedSequence, frame.sequence > expectedSequence {
+            let missing = Int(frame.sequence - expectedSequence)
+            metrics.missingPackets += missing
+            for _ in 0..<min(missing, Self.maximumConcealedGapFrames) {
+                let concealed = concealedFrame()
+                ready.append(concealed)
+                lastOutputSample = lastSample(in: concealed)
+                readyFrames += 1
+            }
+            fadeInNextRealFrame = true
         }
-        highestSequence = max(highestSequence ?? frame.sequence, frame.sequence)
-        pending[frame.sequence] = frame.pcm16
+
+        let output = fadeInNextRealFrame ? fadedIn(frame.pcm16) : frame.pcm16
+        fadeInNextRealFrame = false
+        ready.append(output)
+        readyFrames += 1
+        lastOutputSample = lastSample(in: output)
+        expectedSequence = frame.sequence &+ 1
         metrics.acceptedPackets += 1
         metrics.lastSequence = frame.sequence
         metrics.signalLevel = signalLevel(frame.pcm16)
 
-        var ready = Data()
-        var readyFrames = 0
-        while canReleaseNextFrame {
-            guard let sequence = nextSequence else { break }
-            let output: Data
-            if let real = pending.removeValue(forKey: sequence) {
-                output = fadeInNextRealFrame ? fadedIn(real) : real
-                fadeInNextRealFrame = false
-            } else {
-                output = concealedFrame()
-                metrics.missingPackets += 1
-                fadeInNextRealFrame = true
-            }
-            lastOutputSample = lastSample(in: output)
-            ready.append(output)
-            readyFrames += 1
-            nextSequence = sequence &+ 1
-        }
-
-        guard readyFrames > 0 else { return nil }
         if !started {
             startupReservoir.append(ready)
             startupReservoirFrames += readyFrames
@@ -87,7 +73,7 @@ public struct AudioJitterBuffer: Sendable {
                 return nil
             }
             started = true
-            let batch = AudioJitterBatch(
+            let batch = AudioStreamBatch(
                 pcm16: startupReservoir,
                 frameCount: startupReservoirFrames
             )
@@ -95,13 +81,7 @@ public struct AudioJitterBuffer: Sendable {
             startupReservoirFrames = 0
             return batch
         }
-        return AudioJitterBatch(pcm16: ready, frameCount: readyFrames)
-    }
-
-    private var canReleaseNextFrame: Bool {
-        guard let nextSequence, let highestSequence else { return false }
-        return highestSequence >= nextSequence
-            && highestSequence - nextSequence >= Self.reorderDepth
+        return AudioStreamBatch(pcm16: ready, frameCount: readyFrames)
     }
 
     private func signalLevel(_ pcm16: Data) -> Double {

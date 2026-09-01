@@ -22,19 +22,31 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
 
     var onAuthenticatedTestFrame: (@Sendable (UInt64) -> Void)?
 
-    private let queue = DispatchQueue(label: "io.nexu.cardputerbridge.audio-udp")
+    private let queue = DispatchQueue(label: "io.nexu.cardputerbridge.audio-tcp")
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var streamFramers: [ObjectIdentifier: AudioStreamFramer] = [:]
+    private var candidateFrames: [ObjectIdentifier: [AudioFrameV1]] = [:]
+    private var activeConnectionID: ObjectIdentifier?
+    private var probeHeartbeatTimer: DispatchSourceTimer?
     private var sessionID: UInt64 = 0
     private var key = SymmetricKey(size: .bits256)
-    // Counts every packet that passed AES-GCM authentication, including the
-    // muted test frames used to prove a newly offered session. Jitter-buffer
+    // Counts every frame that passed AES-GCM authentication, including the
+    // muted test frames used to prove a newly offered session. Stream-buffer
     // metrics are reset when capture is muted, but this session proof must not
     // be reset or the App will continuously rotate otherwise healthy offers.
     private var authenticatedPacketCount = 0
-    private var jitterBuffer = AudioJitterBuffer(sessionID: 0)
+    private var authenticatedMissingCount = 0
+    private var authenticatedDuplicateOrLateCount = 0
+    private var expectedAuthenticatedSequence: UInt32?
+    private var streamBuffer = AudioStreamBuffer(sessionID: 0)
     private var resampler = try? PCM16ToFloat32Resampler()
     private let systemMicrophone = SystemMicrophoneProducer()
+    private var systemMicrophoneIsReady = false
+    private var lastStreamPublishUptime: UInt64 = 0
+    private var pendingStreamFault: String?
+    private var streamPublishWorkItem: DispatchWorkItem?
+    private static let streamPublishIntervalNanoseconds: UInt64 = 100_000_000
     private let runtimeProbeURL = ProcessInfo.processInfo.environment[
         "CARDPUTER_BRIDGE_AUDIO_PROBE_PATH"
     ].map(URL.init(fileURLWithPath:))
@@ -55,6 +67,7 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             let ready = self.systemMicrophone.open()
+            self.systemMicrophoneIsReady = ready
             self.publish(
                 fault: ready ? nil : "virtual_microphone_pipeline_unavailable",
                 systemMicrophoneReady: ready
@@ -69,9 +82,17 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         sessionID = newSessionID
         key = newKey
         authenticatedPacketCount = 0
-        jitterBuffer = AudioJitterBuffer(sessionID: newSessionID)
+        authenticatedMissingCount = 0
+        authenticatedDuplicateOrLateCount = 0
+        expectedAuthenticatedSequence = nil
+        streamBuffer = AudioStreamBuffer(sessionID: newSessionID)
         resampler = try? PCM16ToFloat32Resampler()
         let microphoneReady = systemMicrophone.open()
+        systemMicrophoneIsReady = microphoneReady
+        lastStreamPublishUptime = 0
+        pendingStreamFault = nil
+        streamPublishWorkItem?.cancel()
+        streamPublishWorkItem = nil
         publish(
             status: .starting,
             clearOffer: true,
@@ -81,9 +102,10 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
                 : "virtual_microphone_pipeline_unavailable",
             systemMicrophoneReady: microphoneReady
         )
+        startProbeHeartbeat()
 
         do {
-            let listener = try NWListener(using: .udp, on: .any)
+            let listener = try NWListener(using: .tcp, on: .any)
             self.listener = listener
             listener.stateUpdateHandler = { [weak self, weak listener] state in
                 self?.handleListenerState(state, listener: listener)
@@ -93,18 +115,25 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
             }
             listener.start(queue: queue)
         } catch {
-            publish(status: .failed, fault: "udp_listener_start_failed_\(error)")
+            publish(status: .failed, fault: "tcp_listener_start_failed_\(error)")
         }
     }
 
     private func stopOnQueue() {
         systemMicrophone.stop()
+        streamPublishWorkItem?.cancel()
+        streamPublishWorkItem = nil
+        probeHeartbeatTimer?.cancel()
+        probeHeartbeatTimer = nil
         listener?.cancel()
         listener = nil
         for connection in connections.values {
             connection.cancel()
         }
         connections.removeAll()
+        streamFramers.removeAll()
+        candidateFrames.removeAll()
+        activeConnectionID = nil
     }
 
     private func handleListenerState(_ state: NWListener.State, listener: NWListener?) {
@@ -130,19 +159,31 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
                 fault: nil
             )
         case .failed(let error):
-            publish(status: .failed, fault: "udp_listener_failed_\(error)")
+            publish(status: .failed, fault: "tcp_listener_failed_\(error)")
         case .cancelled:
             publish(status: .stopped, clearOffer: true)
         case .setup, .waiting:
             break
         @unknown default:
-            publish(status: .failed, fault: "udp_listener_unknown_state")
+            publish(status: .failed, fault: "tcp_listener_unknown_state")
         }
     }
 
     private func accept(_ connection: NWConnection) {
+        // Keep the current authenticated stream alive while a candidate proves
+        // possession of the session key. An unauthenticated LAN client must not
+        // be able to evict the real Cardputer by merely opening a TCP socket.
+        guard connections.count < 4 else {
+            connection.cancel()
+            return
+        }
+
         let identifier = ObjectIdentifier(connection)
         connections[identifier] = connection
+        candidateFrames[identifier] = []
+        streamFramers[identifier] = AudioStreamFramer(
+            frameBytes: AudioStreamFrameV1.frameBytes
+        )
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             if case .failed = state {
                 self?.remove(connection, identifier: identifier)
@@ -152,20 +193,41 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         }
         connection.start(queue: queue)
         receiveNext(on: connection, identifier: identifier)
+        queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.activeConnectionID != identifier else { return }
+            self.remove(self.connections[identifier], identifier: identifier)
+        }
     }
 
     private func remove(_ connection: NWConnection?, identifier: ObjectIdentifier) {
         connection?.cancel()
         connections.removeValue(forKey: identifier)
+        streamFramers.removeValue(forKey: identifier)
+        candidateFrames.removeValue(forKey: identifier)
+        if activeConnectionID == identifier {
+            activeConnectionID = nil
+        }
     }
 
     private func receiveNext(on connection: NWConnection, identifier: ObjectIdentifier) {
-        connection.receiveMessage { [weak self, weak connection] data, _, _, error in
+        connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: AudioStreamFrameV1.frameBytes * 16
+        ) { [weak self, weak connection] data, _, isComplete, error in
             guard let self, let connection else { return }
-            if let data {
-                self.consume(data)
+            if let data, !data.isEmpty,
+               var framer = self.streamFramers[identifier] {
+                let frames = framer.append(data)
+                self.streamFramers[identifier] = framer
+                for frame in frames {
+                    self.consume(
+                        frame,
+                        from: identifier,
+                        connection: connection
+                    )
+                }
             }
-            if error == nil {
+            if error == nil, !isComplete {
                 self.receiveNext(on: connection, identifier: identifier)
             } else {
                 self.remove(connection, identifier: identifier)
@@ -173,60 +235,176 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func consume(_ datagram: Data) {
+    private func consume(
+        _ encryptedFrame: Data,
+        from identifier: ObjectIdentifier,
+        connection: NWConnection
+    ) {
         do {
-            let frame = try AudioDatagramV1.open(
-                datagram,
+            let frame = try AudioStreamFrameV1.open(
+                encryptedFrame,
                 expectedSessionID: sessionID,
                 key: key
             )
-            authenticatedPacketCount += 1
-            if frame.flags.contains(.muted) || frame.flags.contains(.end) {
-                systemMicrophone.stop()
-                resetAudioPipeline()
-            } else if let batch = jitterBuffer.push(frame) {
-                guard let floatSamples = try resampler?.convert(batch.pcm16) else {
-                    publish(
-                        status: .receiving,
-                        metrics: currentMetrics,
-                        fault: "audio_resample_failed"
-                    )
-                    return
-                }
-                let written = systemMicrophone.write(float32: floatSamples)
-                let recovered = written || (
-                    systemMicrophone.open()
-                        && systemMicrophone.write(float32: floatSamples)
+            if activeConnectionID != identifier {
+                authenticateCandidate(
+                    frame,
+                    identifier: identifier,
+                    connection: connection
                 )
-                guard recovered else {
-                    publish(
-                        status: .receiving,
-                        metrics: currentMetrics,
-                        fault: "virtual_microphone_write_failed",
-                        systemMicrophoneReady: false
-                    )
-                    return
-                }
-                publish(systemMicrophoneReady: true)
+                return
             }
-            publish(status: .receiving, metrics: currentMetrics, fault: nil)
-            if frame.flags.contains(.test) {
-                onAuthenticatedTestFrame?(sessionID)
-            }
+            consumeAuthenticated(frame)
         } catch {
-            publish(fault: "audio_packet_rejected_\(error)")
+            publishStreamProgress(fault: "audio_packet_rejected_\(error)")
+            remove(connection, identifier: identifier)
         }
     }
 
+    private func authenticateCandidate(
+        _ frame: AudioFrameV1,
+        identifier: ObjectIdentifier,
+        connection: NWConnection
+    ) {
+        guard frame.flags.contains(.test), frame.flags.contains(.muted) else {
+            remove(connection, identifier: identifier)
+            return
+        }
+        var frames = candidateFrames[identifier] ?? []
+        if let previous = frames.last,
+           frame.sequence != previous.sequence &+ 1 {
+            remove(connection, identifier: identifier)
+            return
+        }
+        frames.append(frame)
+        candidateFrames[identifier] = frames
+        guard frames.count == 3 else { return }
+        if let expected = expectedAuthenticatedSequence,
+           let first = frames.first,
+           first.sequence < expected {
+            remove(connection, identifier: identifier)
+            return
+        }
+
+        let otherConnections = connections.filter { $0.key != identifier }
+        for (otherID, other) in otherConnections {
+            other.cancel()
+            connections.removeValue(forKey: otherID)
+            streamFramers.removeValue(forKey: otherID)
+            candidateFrames.removeValue(forKey: otherID)
+        }
+        activeConnectionID = identifier
+        candidateFrames.removeValue(forKey: identifier)
+        for testFrame in frames {
+            consumeAuthenticated(testFrame)
+        }
+        onAuthenticatedTestFrame?(sessionID)
+    }
+
+    private func consumeAuthenticated(_ frame: AudioFrameV1) {
+        guard observeAuthenticatedSequence(frame.sequence) else {
+            publishStreamProgress()
+            return
+        }
+        if frame.flags.contains(.muted) || frame.flags.contains(.end) {
+            systemMicrophone.stop()
+            resetAudioPipeline()
+        } else if let batch = streamBuffer.push(frame) {
+            guard let resampler,
+                  let floatSamples = try? resampler.convert(batch.pcm16) else {
+                publishStreamProgress(fault: "audio_resample_failed")
+                return
+            }
+            let written = systemMicrophone.write(float32: floatSamples)
+            let recovered = written || (
+                systemMicrophone.open()
+                    && systemMicrophone.write(float32: floatSamples)
+            )
+            guard recovered else {
+                systemMicrophoneIsReady = false
+                publishStreamProgress(fault: "virtual_microphone_write_failed")
+                return
+            }
+            systemMicrophoneIsReady = true
+        }
+        publishStreamProgress()
+    }
+
+    private func observeAuthenticatedSequence(_ sequence: UInt32) -> Bool {
+        authenticatedPacketCount += 1
+        guard let expected = expectedAuthenticatedSequence else {
+            expectedAuthenticatedSequence = sequence &+ 1
+            return true
+        }
+        if sequence < expected {
+            authenticatedDuplicateOrLateCount += 1
+            return false
+        }
+        if sequence > expected {
+            authenticatedMissingCount += Int(sequence - expected)
+        }
+        expectedAuthenticatedSequence = sequence &+ 1
+        return true
+    }
+
     private func resetAudioPipeline() {
-        jitterBuffer = AudioJitterBuffer(sessionID: sessionID)
+        streamBuffer = AudioStreamBuffer(sessionID: sessionID)
         resampler = try? PCM16ToFloat32Resampler()
     }
 
     private var currentMetrics: AudioStreamMetrics {
-        var current = jitterBuffer.metrics
+        var current = streamBuffer.metrics
         current.acceptedPackets = authenticatedPacketCount
+        current.missingPackets = authenticatedMissingCount
+        current.duplicateOrLatePackets = authenticatedDuplicateOrLateCount
         return current
+    }
+
+    private func publishStreamProgress(fault: String? = nil) {
+        if let fault {
+            pendingStreamFault = fault
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        let elapsed = now &- lastStreamPublishUptime
+        guard elapsed >= Self.streamPublishIntervalNanoseconds else {
+            if streamPublishWorkItem == nil {
+                let remaining = Self.streamPublishIntervalNanoseconds - elapsed
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.streamPublishWorkItem = nil
+                    self.publishStreamProgress()
+                }
+                streamPublishWorkItem = workItem
+                queue.asyncAfter(
+                    deadline: .now() + .nanoseconds(Int(remaining)),
+                    execute: workItem
+                )
+            }
+            return
+        }
+        streamPublishWorkItem?.cancel()
+        streamPublishWorkItem = nil
+        lastStreamPublishUptime = now
+        let streamFault = pendingStreamFault
+        pendingStreamFault = nil
+        publish(
+            status: .receiving,
+            metrics: currentMetrics,
+            fault: streamFault,
+            systemMicrophoneReady: systemMicrophoneIsReady
+        )
+    }
+
+    private func startProbeHeartbeat() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
+        timer.setEventHandler { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                self?.publishRuntimeProbe()
+            }
+        }
+        probeHeartbeatTimer = timer
+        timer.resume()
     }
 
     private func publish(
@@ -255,6 +433,8 @@ final class AudioReceiverController: ObservableObject, @unchecked Sendable {
         guard let runtimeProbeURL else { return }
         var payload: [String: Any] = [
             "status": status.rawValue,
+            "transport": "tcp",
+            "updated_at_unix_ms": Int(Date().timeIntervalSince1970 * 1_000),
             "accepted_packets": metrics.acceptedPackets,
             "missing_packets": metrics.missingPackets,
             "duplicate_or_late_packets": metrics.duplicateOrLatePackets,

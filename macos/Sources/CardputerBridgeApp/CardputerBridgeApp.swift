@@ -1823,7 +1823,7 @@ private struct BridgeRootView: View {
                authenticatedPacketCount: audio.metrics.acceptedPackets
            ) {
             // The device rebooted or lost its receiver while this App still
-            // holds authenticated packets from the previous UDP session.
+            // holds authenticated frames from the previous stream session.
             // Rotate before offering so sequence zero never reuses a GCM nonce.
             audio.start()
             lastOfferedSessionID = nil
@@ -1837,7 +1837,7 @@ private struct BridgeRootView: View {
         ) else {
             return
         }
-        // The device can still report `audio:ready` for a UDP session owned by
+        // The device can still report `audio:ready` for a stream session owned by
         // the previous App process. Only an authenticated frame received by
         // this process proves that both endpoints share the current session.
         guard let offer = audio.offer else {

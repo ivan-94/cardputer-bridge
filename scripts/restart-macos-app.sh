@@ -21,7 +21,7 @@ fi
 
 product_pids() {
   {
-    # Installed, version-suffixed and DerivedData copies share BLE, UDP and HAL
+    # Installed, version-suffixed and DerivedData copies share BLE, TCP and HAL
     # resources. Stop every Cardputer Bridge app before selecting one build.
     pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge' || true
     pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge .*' || true

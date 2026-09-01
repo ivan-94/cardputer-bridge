@@ -16,9 +16,9 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     "$serial_python" "$project_dir/scripts/verify_audio_hil.py" \
       --port "$port" \
       --audio-probe "$probe" \
-      --capture-seconds "${CARDPUTER_PHASE3_CAPTURE_SECONDS:-8}"
+      --capture-seconds "${CARDPUTER_PHASE3_CAPTURE_SECONDS:-60}"
     "$project_dir/scripts/verify_macos_restart_mute_hil.py"
-    printf 'PASS phase3_authenticated_udp_to_app_and_mute\n'
+    printf 'PASS phase3_authenticated_tcp_stream_to_app_and_mute\n'
     exit 0
   fi
   sleep 1

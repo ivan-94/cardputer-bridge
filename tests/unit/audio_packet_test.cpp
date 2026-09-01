@@ -20,17 +20,17 @@ void test_network_header_round_trip_matches_protocol_v1() {
         0x0102030405060708ULL,
         0x0a0b0c0d,
         0x10111213,
+        160,
         320,
-        640,
     };
     constexpr std::array<std::uint8_t, cardbridge::kAudioHeaderBytes> expected{
-        'C', 'B', 'R', '1',
+        'C', 'B', 'S', '1',
         0x01, 0x03, 0x00, 0x1c,
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
         0x0a, 0x0b, 0x0c, 0x0d,
         0x10, 0x11, 0x12, 0x13,
+        0x00, 0xa0,
         0x01, 0x40,
-        0x02, 0x80,
     };
 
     std::array<std::uint8_t, cardbridge::kAudioHeaderBytes> encoded{};
@@ -50,13 +50,13 @@ void test_network_header_round_trip_matches_protocol_v1() {
 
 void test_rejects_wrong_magic_and_non_v1_frame_shape() {
     std::array<std::uint8_t, cardbridge::kAudioHeaderBytes> bytes{
-        'X', 'B', 'R', '1',
+        'X', 'B', 'S', '1',
         0x01, 0x00, 0x00, 0x1c,
         0, 0, 0, 0, 0, 0, 0, 1,
         0, 0, 0, 1,
         0, 0, 0, 0,
+        0x00, 0xa0,
         0x01, 0x40,
-        0x02, 0x80,
     };
     cardbridge::AudioPacketHeader decoded{};
     require(
@@ -69,7 +69,7 @@ void test_rejects_wrong_magic_and_non_v1_frame_shape() {
     bytes[25] = 1;
     require(
         !cardbridge::decode_audio_header(bytes.data(), bytes.size(), decoded),
-        "v1 must reject a frame that is not 320 samples"
+        "stream v1 must reject a frame that is not 160 samples"
     );
 }
 

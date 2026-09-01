@@ -435,7 +435,8 @@ bool is_wifi_commit(std::string_view message) {
 
 bool parse_audio_offer(std::string_view message, AudioOffer& offer) {
     if (!is_json_object(message) || !is_version_one(message) ||
-        !string_value_equals(message, "type", "audio_offer")) {
+        !string_value_equals(message, "type", "audio_offer") ||
+        !string_value_equals(message, "transport", "tcp")) {
         return false;
     }
     const std::string_view ipv4 = string_value(message, "ip");

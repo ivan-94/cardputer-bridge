@@ -24,7 +24,10 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 # M5Unified's display/SPI auto-detection uses roughly 3.7 KiB before app_main
 # reaches the bridge loop. Keep headroom for the bridge's local routing state.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-# Audio frames are 20 ms. A 100 Hz RTOS tick makes the microphone completion
-# poll advance in coarse 10 ms steps. A 1 ms tick keeps capture and transport
-# scheduling responsive around the calibrated 50-frame/s device cadence.
+# Audio frames are 10 ms. A 100 Hz RTOS tick leaves no scheduling margin. A
+# 1 ms tick keeps capture and transport responsive at the 100-frame/s cadence.
 CONFIG_FREERTOS_HZ=1000
+# Keep the TCP kernel queue near 80 ms. The application already owns a bounded
+# 200 ms capture ring, so the default 160 ms socket queue only adds hidden
+# latency without adding observability.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880

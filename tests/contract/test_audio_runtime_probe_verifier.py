@@ -8,6 +8,7 @@ class AudioRuntimeProbeVerifierTests(unittest.TestCase):
         result = verify_readiness(
             {
                 "status": "listening",
+                "transport": "tcp",
                 "accepted_packets": 0,
                 "listener_port": 49152,
                 "session_id": "0123456789abcdef",
@@ -21,6 +22,7 @@ class AudioRuntimeProbeVerifierTests(unittest.TestCase):
         result = verify(
             {
                 "status": "receiving",
+                "transport": "tcp",
                 "accepted_packets": 3,
                 "missing_packets": 0,
                 "duplicate_or_late_packets": 0,
@@ -37,6 +39,7 @@ class AudioRuntimeProbeVerifierTests(unittest.TestCase):
         result = verify(
             {
                 "status": "listening",
+                "transport": "tcp",
                 "accepted_packets": 0,
                 "missing_packets": 12,
                 "duplicate_or_late_packets": 0,
@@ -47,6 +50,23 @@ class AudioRuntimeProbeVerifierTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("authenticated_packets_missing", result["errors"])
         self.assertIn("receiver_fault_present", result["errors"])
+
+    def test_rejects_even_one_missing_or_duplicate_stream_frame(self) -> None:
+        result = verify(
+            {
+                "status": "receiving",
+                "transport": "tcp",
+                "accepted_packets": 100,
+                "missing_packets": 1,
+                "duplicate_or_late_packets": 1,
+                "listener_port": 49152,
+                "session_id": "0123456789abcdef",
+            }
+        )
+
+        self.assertFalse(result["valid"])
+        self.assertIn("stream_sequence_gap", result["errors"])
+        self.assertIn("stream_duplicate_or_late", result["errors"])
 
 
 if __name__ == "__main__":

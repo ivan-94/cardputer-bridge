@@ -18,7 +18,7 @@ def counter_delta(before: dict[str, Any], after: dict[str, Any], field: str) -> 
 def verify_idle_efficiency(transport: Any, duration: float) -> dict[str, Any]:
     muted = send_command(transport, "mic muted")
     assert_fields(muted, mic_intent="muted", capture_gate="closed")
-    # Let any offer/reconnect test datagrams drain before taking the baseline.
+    # Let any offer/reconnect test frames drain before taking the baseline.
     time.sleep(1.0)
     baseline = send_command(transport, "status")
     assert_fields(baseline, mic_intent="muted", capture_gate="closed")
@@ -30,7 +30,7 @@ def verify_idle_efficiency(transport: Any, duration: float) -> dict[str, Any]:
         latest = send_command(transport, "status")
         assert_fields(latest, mic_intent="muted", capture_gate="closed")
 
-    sent_delta = counter_delta(baseline, latest, "udp_sent")
+    sent_delta = counter_delta(baseline, latest, "stream_frames_sent")
     overrun_delta = counter_delta(baseline, latest, "capture_overruns")
     idle_wait_delta = counter_delta(baseline, latest, "audio_idle_wait_total")
     telemetry_delta = counter_delta(
@@ -38,7 +38,8 @@ def verify_idle_efficiency(transport: Any, duration: float) -> dict[str, Any]:
         latest,
         "wifi_telemetry_refresh_total",
     )
-    maximum_idle_waits = math.ceil(duration * 1000 / 250) + 8
+    # Capture and transport are independent blocking tasks while muted.
+    maximum_idle_waits = 2 * math.ceil(duration * 1000 / 250) + 16
     maximum_telemetry_refreshes = math.ceil(duration * 1000 / 5000) + 2
     if sent_delta != 0:
         raise AssertionError(f"muted_audio_packets_sent delta={sent_delta}")
@@ -62,7 +63,7 @@ def verify_idle_efficiency(transport: Any, duration: float) -> dict[str, Any]:
         raise AssertionError(f"largest_free_block_too_small bytes={largest_free_block}")
     return {
         "duration_seconds": duration,
-        "udp_sent_delta": sent_delta,
+        "stream_frames_sent_delta": sent_delta,
         "capture_overrun_delta": overrun_delta,
         "idle_wait_delta": idle_wait_delta,
         "notification_wake_delta": counter_delta(

@@ -189,6 +189,15 @@ target_compile_options(audio_packet_test PRIVATE -Wall -Wextra -Wpedantic -Werro
 
 add_test(NAME audio_packet_test COMMAND audio_packet_test)
 
+add_executable(audio_frame_ring_test
+    tests/unit/audio_frame_ring_test.cpp
+)
+
+target_link_libraries(audio_frame_ring_test PRIVATE audio_packet)
+target_compile_options(audio_frame_ring_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME audio_frame_ring_test COMMAND audio_frame_ring_test)
+
 add_library(firmware_update_policy
     firmware/components/firmware_update/firmware_update_policy.cpp
 )

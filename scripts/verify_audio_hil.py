@@ -118,7 +118,7 @@ def wait_for_audio_session_ready(path: Path, timeout: float = 15.0) -> None:
             ):
                 # The ESP32-S3 radio has just recovered from reset and shares
                 # 2.4 GHz between BLE and Wi-Fi. Let that association/session
-                # settle before measuring the strict 8-second loss window.
+                # settle before measuring the strict 60-second loss window.
                 time.sleep(3.0)
                 return
         except (OSError, ValueError, json.JSONDecodeError):
@@ -142,7 +142,7 @@ def main() -> int:
         "--macos-probe",
         default=str(Path.home() / ".local/share/cardputer-bridge/runtime/macos-state.json"),
     )
-    parser.add_argument("--capture-seconds", type=float, default=8.0)
+    parser.add_argument("--capture-seconds", type=float, default=60.0)
     parser.add_argument(
         "--control-source",
         choices=("app", "serial"),
@@ -233,21 +233,21 @@ def main() -> int:
             )
 
         after_probe = read_probe(probe_path)
-        sent_growth = int(live_last.get("udp_sent", 0)) - int(
-            initial.get("udp_sent", 0)
+        sent_growth = int(live_last.get("stream_frames_sent", 0)) - int(
+            initial.get("stream_frames_sent", 0)
         )
         accepted_growth = int(after_probe.get("accepted_packets", 0)) - int(
             before_probe.get("accepted_packets", 0)
         )
-        udp_failure_growth = int(stopped.get("udp_failures", 0)) - int(
-            initial.get("udp_failures", 0)
+        stream_failure_growth = int(stopped.get("stream_failures", 0)) - int(
+            initial.get("stream_failures", 0)
         )
         capture_overrun_growth = int(stopped.get("capture_overruns", 0)) - int(
             initial.get("capture_overruns", 0)
         )
-        # A 320-sample frame at 16 kHz is 20 ms: healthy capture must remain
-        # near 50 packets/s. Allow 10% scheduling/network tolerance.
-        minimum_stream_packets = max(10, int(args.capture_seconds * 45))
+        # A 160-sample frame at 16 kHz is 10 ms: healthy capture must remain
+        # near 100 frames/s. Allow 10% scheduling/network tolerance.
+        minimum_stream_packets = max(10, int(args.capture_seconds * 90))
         if sent_growth < minimum_stream_packets:
             raise AssertionError(f"audio_send_growth_too_small value={sent_growth}")
         if accepted_growth < minimum_stream_packets:
@@ -257,17 +257,29 @@ def main() -> int:
         missing_growth = int(after_probe.get("missing_packets", 0)) - int(
             before_probe.get("missing_packets", 0)
         )
-        maximum_missing_packets = max(2, int(args.capture_seconds * 0.5))
-        if missing_growth > maximum_missing_packets:
+        if missing_growth != 0:
             raise AssertionError(
-                "audio_packet_loss_too_high "
-                f"missing={missing_growth} maximum={maximum_missing_packets}"
+                f"audio_stream_sequence_gap value={missing_growth}"
             )
-        if int(stopped.get("udp_sent", -1)) != int(drained.get("udp_sent", -2)):
-            raise AssertionError("audio_continued_after_mute")
-        if udp_failure_growth != 0:
+        duplicate_growth = int(
+            after_probe.get("duplicate_or_late_packets", 0)
+        ) - int(before_probe.get("duplicate_or_late_packets", 0))
+        if duplicate_growth != 0:
             raise AssertionError(
-                f"udp_failures_grew value={udp_failure_growth}"
+                f"audio_stream_duplicate_or_late value={duplicate_growth}"
+            )
+        if abs(sent_growth - accepted_growth) > 2:
+            raise AssertionError(
+                "audio_stream_sender_receiver_mismatch "
+                f"sent={sent_growth} accepted={accepted_growth}"
+            )
+        if int(stopped.get("stream_frames_sent", -1)) != int(
+            drained.get("stream_frames_sent", -2)
+        ):
+            raise AssertionError("audio_continued_after_mute")
+        if stream_failure_growth != 0:
+            raise AssertionError(
+                f"stream_failures_grew value={stream_failure_growth}"
             )
         if capture_overrun_growth != 0:
             raise AssertionError(
@@ -293,11 +305,12 @@ def main() -> int:
                 "sent_growth": sent_growth,
                 "accepted_growth": accepted_growth,
                 "missing_growth": missing_growth,
-                "muted_udp_sent": stopped["udp_sent"],
+                "duplicate_or_late_growth": duplicate_growth,
+                "muted_stream_frames_sent": stopped["stream_frames_sent"],
                 "signal_level": after_probe["signal_level"],
-                "udp_failure_growth": udp_failure_growth,
+                "stream_failure_growth": stream_failure_growth,
                 "capture_overrun_growth": capture_overrun_growth,
-                "udp_failures_total": stopped["udp_failures"],
+                "stream_failures_total": stopped["stream_failures"],
                 "capture_overruns_total": stopped["capture_overruns"],
             },
             ensure_ascii=False,

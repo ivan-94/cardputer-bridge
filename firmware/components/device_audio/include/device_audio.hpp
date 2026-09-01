@@ -20,8 +20,8 @@ struct DeviceAudioStatus {
     // IEEE 802.11 SSIDs are at most 32 bytes; keep one extra byte for NUL so
     // the Mac never sees a silently truncated current-network name.
     std::array<char, 33> wifi_ssid{};
-    std::uint32_t udp_sent = 0;
-    std::uint32_t udp_failures = 0;
+    std::uint32_t stream_frames_sent = 0;
+    std::uint32_t stream_failures = 0;
     std::uint32_t capture_overruns = 0;
     std::uint32_t idle_wait_total = 0;
     std::uint32_t notification_wake_total = 0;

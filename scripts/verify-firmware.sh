@@ -35,13 +35,16 @@ grep -Eq '^factory,[[:space:]]*app,[[:space:]]*factory,[[:space:]]*0x10000,[[:sp
 grep -Eq '^ota_0,[[:space:]]*app,[[:space:]]*ota_0,[[:space:]]*0x210000,[[:space:]]*0x200000,' "$project_dir/firmware/partitions.csv"
 grep -Eq '^ota_1,[[:space:]]*app,[[:space:]]*ota_1,[[:space:]]*0x410000,[[:space:]]*0x200000,' "$project_dir/firmware/partitions.csv"
 grep -Eq '^otadata,[[:space:]]*data,[[:space:]]*ota,[[:space:]]*0x610000,[[:space:]]*0x2000,' "$project_dir/firmware/partitions.csv"
-grep -Eq '^[[:space:]]*set\(PROJECT_VER "0\.10\.0"\)$' \
-  "$project_dir/firmware/CMakeLists.txt"
-image_info="$("$esptool" image_info "$binary")"
+expected_version="$(
+  sed -n 's/^[[:space:]]*set(PROJECT_VER "\([0-9][^"]*\)")$/\1/p' \
+    "$project_dir/firmware/CMakeLists.txt" | tail -n 1
+)"
+test -n "$expected_version"
+image_info="$("$esptool" image_info --version 2 "$binary")"
 grep -q 'ESP32-S3' <<EOF
 $image_info
 EOF
-grep -q 'App version: 0.10.0' <<EOF
+grep -q "App version: $expected_version" <<EOF
 $image_info
 EOF
 size="$(stat -f '%z' "$binary")"

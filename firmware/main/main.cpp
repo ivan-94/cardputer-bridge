@@ -366,7 +366,7 @@ void publish_state(const cardbridge::BridgeState& state) {
         state_json,
         sizeof(state_json),
         "{\"v\":1,\"mic_intent\":\"%s\",\"capture_gate\":\"%s\",\"hid\":\"%s\","
-        "\"wifi\":\"%s\",\"ssid\":\"%s\",\"audio\":\"%s\",\"udp_sent\":%" PRIu32 ","
+        "\"wifi\":\"%s\",\"ssid\":\"%s\",\"audio\":\"%s\","
         "\"cfg_v\":\"%016" PRIx64 "\"}",
         state.mic_intent == cardbridge::MicIntent::kLive ? "live" : "muted",
         state.capture_gate == cardbridge::CaptureGate::kOpen ? "open" : "closed",
@@ -374,7 +374,6 @@ void publish_state(const cardbridge::BridgeState& state) {
         audio.wifi_connected ? "connected" : "offline",
         audio.wifi_ssid.data(),
         audio.receiver_ready ? "ready" : "waiting",
-        audio.udp_sent,
         cardbridge::device_shortcut_config_version()
     );
     (void)ble_bridge_notify_state(state_json);
@@ -417,8 +416,8 @@ void emit_diagnostic_state(
         "\"hid_report_failures\":%" PRIu32 ","
         "\"input_all_keys_up\":%s,"
         "\"wifi_connected\":%s,\"wifi_rssi\":%" PRId32 ","
-        "\"audio_receiver_ready\":%s,\"udp_sent\":%" PRIu32 ","
-        "\"udp_failures\":%" PRIu32 ",\"capture_overruns\":%" PRIu32 ","
+        "\"audio_receiver_ready\":%s,\"stream_frames_sent\":%" PRIu32 ","
+        "\"stream_failures\":%" PRIu32 ",\"capture_overruns\":%" PRIu32 ","
         "\"audio_idle_wait_total\":%" PRIu32 ","
         "\"audio_notification_wake_total\":%" PRIu32 ","
         "\"wifi_telemetry_refresh_total\":%" PRIu32 ","
@@ -449,8 +448,8 @@ void emit_diagnostic_state(
         audio.wifi_connected ? "true" : "false",
         audio.wifi_rssi,
         audio.receiver_ready ? "true" : "false",
-        audio.udp_sent,
-        audio.udp_failures,
+        audio.stream_frames_sent,
+        audio.stream_failures,
         audio.capture_overruns,
         audio.idle_wait_total,
         audio.notification_wake_total,

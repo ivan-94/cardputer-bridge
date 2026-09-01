@@ -18,6 +18,7 @@ final class AudioControlMessageTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(data.count, 160)
         XCTAssertEqual("audio_offer", json["type"] as? String)
+        XCTAssertEqual("tcp", json["transport"] as? String)
         XCTAssertEqual("0102030405060708", json["sid"] as? String)
         XCTAssertEqual(44, (json["key"] as? String)?.count)
     }

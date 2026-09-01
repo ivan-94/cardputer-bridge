@@ -4,11 +4,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 
 def verify_readiness(probe: dict[str, Any]) -> dict[str, object]:
     errors: list[str] = []
+    if probe.get("transport") != "tcp":
+        errors.append("reliable_transport_missing")
     if probe.get("status") not in {"listening", "receiving"}:
         errors.append("receiver_not_ready")
     if probe.get("system_microphone_ready") is not True:
@@ -34,11 +37,16 @@ def verify(probe: dict[str, Any]) -> dict[str, object]:
         errors.append("authenticated_packets_missing")
     if probe.get("fault"):
         errors.append("receiver_fault_present")
+    duplicates = probe.get("duplicate_or_late_packets")
     if isinstance(accepted, int) and isinstance(missing, int):
-        if missing > max(3, accepted // 10):
-            errors.append("packet_loss_unbounded")
+        if missing != 0:
+            errors.append("stream_sequence_gap")
     else:
         errors.append("packet_metrics_missing")
+    if not isinstance(duplicates, int) or duplicates != 0:
+        errors.append("stream_duplicate_or_late")
+    if probe.get("transport") != "tcp":
+        errors.append("reliable_transport_missing")
     port = probe.get("listener_port")
     if not isinstance(port, int) or not 0 < port <= 65535:
         errors.append("listener_endpoint_missing")
@@ -51,6 +59,11 @@ def verify(probe: dict[str, Any]) -> dict[str, object]:
 def verify_file(path: Path, *, readiness_only: bool = False) -> dict[str, object]:
     probe = json.loads(path.read_text(encoding="utf-8"))
     result = verify_readiness(probe) if readiness_only else verify(probe)
+    age_seconds = time.time() - path.stat().st_mtime
+    if age_seconds > 5:
+        result["valid"] = False
+        result["errors"].append("runtime_probe_stale")
+    result["age_seconds"] = round(age_seconds, 3)
     result["probe"] = str(path)
     result["observed"] = probe
     return result

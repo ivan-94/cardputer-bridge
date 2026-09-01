@@ -28,6 +28,7 @@ public struct AudioOfferMessage: Sendable {
         try boundedJSON(AudioOfferWire(
             v: 1,
             type: "audio_offer",
+            transport: "tcp",
             ip: ipv4,
             port: port,
             sid: String(format: "%016llx", sessionID),
@@ -104,6 +105,7 @@ private func boundedJSON<T: Encodable>(_ value: T) throws -> Data {
 private struct AudioOfferWire: Encodable {
     let v: Int
     let type: String
+    let transport: String
     let ip: String
     let port: UInt16
     let sid: String

@@ -86,12 +86,17 @@ int main() {
 
     cardbridge::AudioOffer offer{};
     if (!cardbridge::parse_audio_offer(
-            R"({"v":1,"type":"audio_offer","ip":"192.168.2.109","port":54321,"sid":"0102030405060708","key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="})",
+            R"({"v":1,"type":"audio_offer","transport":"tcp","ip":"192.168.2.109","port":54321,"sid":"0102030405060708","key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="})",
             offer) ||
         std::string_view(offer.ipv4.data()) != "192.168.2.109" ||
         offer.port != 54321 ||
         offer.session_id != 0x0102030405060708ULL ||
         offer.key[0] != 0 || offer.key[31] != 31) {
+        return EXIT_FAILURE;
+    }
+    if (cardbridge::parse_audio_offer(
+            R"({"v":1,"type":"audio_offer","ip":"192.168.2.109","port":54321,"sid":"0102030405060708","key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="})",
+            offer)) {
         return EXIT_FAILURE;
     }
     std::uint64_t ready_session = 0;

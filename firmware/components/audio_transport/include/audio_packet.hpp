@@ -6,11 +6,11 @@
 namespace cardbridge {
 
 constexpr std::size_t kAudioHeaderBytes = 28;
-constexpr std::size_t kAudioFrameSamples = 320;
-constexpr std::size_t kAudioPayloadBytes = 640;
+constexpr std::size_t kAudioFrameSamples = 160;
+constexpr std::size_t kAudioPayloadBytes = 320;
 constexpr std::size_t kAudioAuthTagBytes = 16;
 constexpr std::size_t kAudioNonceBytes = 12;
-constexpr std::size_t kAudioDatagramBytes =
+constexpr std::size_t kAudioStreamFrameBytes =
     kAudioHeaderBytes + kAudioPayloadBytes + kAudioAuthTagBytes;
 
 enum AudioPacketFlag : std::uint8_t {
