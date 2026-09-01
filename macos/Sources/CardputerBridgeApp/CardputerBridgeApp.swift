@@ -268,7 +268,7 @@ private struct BridgeRootView: View {
                 syncShortcutConfigurationIfNeeded()
             }
         }
-        .task(id: setupStep) {
+        .task(id: onboardingTaskKey) {
             guard !setupCompleted else { return }
             if setupStep == 0 {
                 firmwareUpdate.refreshUSBReadiness()
@@ -504,7 +504,7 @@ private struct BridgeRootView: View {
                     .bridgePanel(border: BridgeTheme.warning.opacity(0.4))
                 }
 
-                if bluetooth.state.phase == .failed {
+                if shouldOfferDeviceRecovery {
                     deviceRecoveryCard
                 }
 
@@ -849,6 +849,15 @@ private struct BridgeRootView: View {
         }
         .padding(16)
         .bridgePanel(border: BridgeTheme.accent.opacity(0.32))
+    }
+
+    private var shouldOfferDeviceRecovery: Bool {
+        bluetooth.state.phase == .failed ||
+            (bluetooth.state.phase == .scanning && bluetooth.state.fault != nil)
+    }
+
+    private var onboardingTaskKey: Int {
+        setupCompleted ? -1 : setupStep
     }
 
     private func beginDeviceRecoverySetup() {
