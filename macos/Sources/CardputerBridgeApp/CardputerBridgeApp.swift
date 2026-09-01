@@ -1165,17 +1165,23 @@ private struct BridgeRootView: View {
         case 1:
             firmwareUpdateCard
         case 2:
-            HStack(spacing: 12) {
-                Image(systemName: statusIcon).foregroundStyle(statusColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(bluetooth.state.device?.name ?? "Cardputer-ADV")
-                        .font(.headline)
-                    Text(statusText).foregroundStyle(BridgeTheme.secondaryText)
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: statusIcon).foregroundStyle(statusColor)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(bluetooth.state.device?.name ?? "Cardputer-ADV")
+                            .font(.headline)
+                        Text(statusText).foregroundStyle(BridgeTheme.secondaryText)
+                    }
+                    Spacer()
+                    if bluetooth.state.phase == .ready {
+                        Label("已连接", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(BridgeTheme.success)
+                    }
                 }
-                Spacer()
-                if bluetooth.state.phase == .ready {
-                    Label("已连接", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(BridgeTheme.success)
+
+                if shouldShowPairingRecovery {
+                    pairingRecoveryCard
                 }
             }
             .padding(18)
@@ -1237,7 +1243,8 @@ private struct BridgeRootView: View {
                     .buttonStyle(BridgePrimaryButtonStyle())
                     .accessibilityIdentifier("onboarding-firmware-continue")
             }
-        } else if setupStep == 2 && bluetooth.state.phase != .ready {
+        } else if setupStep == 2 && bluetooth.state.phase != .ready &&
+                    !shouldShowPairingRecovery {
             actionButton
         } else if setupStep == 3 && !deviceWiFiConnected {
             Button {
@@ -1319,6 +1326,109 @@ private struct BridgeRootView: View {
         case 4: "安装后，Cardputer Microphone 会出现在 Mac 的输入设备列表中。"
         default: "Cardputer 已准备好，可以开始使用。"
         }
+    }
+
+    private var shouldShowPairingRecovery: Bool {
+        bluetooth.state.phase == .failed ||
+            (bluetooth.state.phase == .scanning && bluetooth.state.fault != nil)
+    }
+
+    private var connectionRecoveryKind: ConnectionRecoveryKind {
+        ConnectionRecoveryGuidance.classify(fault: bluetooth.state.fault)
+    }
+
+    @ViewBuilder
+    private var pairingRecoveryCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            switch connectionRecoveryKind {
+            case .stalePairing:
+                Label("清除旧配对后重试", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                    .foregroundStyle(BridgeTheme.warning)
+
+                Text("Cardputer 的配对密钥已经变化，Mac 保存的旧配对信息无法继续使用。")
+                    .foregroundStyle(BridgeTheme.secondaryText)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("打开系统设置 → 蓝牙", systemImage: "1.circle.fill")
+                    Label("找到 Cardputer Bridge，点击 ⓘ 并选择“忽略此设备”", systemImage: "2.circle.fill")
+                }
+                .font(.callout)
+
+                HStack(spacing: 10) {
+                    Button("打开蓝牙设置") {
+                        openBluetoothSettings()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("已忽略，重新查找") {
+                        bluetooth.forgetRememberedDevice()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+            case .firmware:
+                Label("重新安装 Cardputer Bridge 固件", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.headline)
+                    .foregroundStyle(BridgeTheme.warning)
+
+                Text("设备可以被发现，但没有提供兼容的 Cardputer Bridge 蓝牙服务。请通过 USB 重新安装固件。")
+                    .foregroundStyle(BridgeTheme.secondaryText)
+
+                Button("从 USB 重新安装固件") {
+                    restartFirmwareOnboarding()
+                }
+                .buttonStyle(.borderedProminent)
+
+            case .general:
+                Label("检查设备后重新连接", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.headline)
+                    .foregroundStyle(BridgeTheme.warning)
+
+                Text("确认 Cardputer 已开机、靠近这台 Mac，然后重新查找。")
+                    .foregroundStyle(BridgeTheme.secondaryText)
+
+                Button("重新查找") {
+                    bluetooth.forgetRememberedDevice()
+                }
+                .buttonStyle(.borderedProminent)
+
+                Divider()
+
+                Text("如果刚刚重刷过固件，请在系统蓝牙中找到 Cardputer Bridge，点击 ⓘ 并选择“忽略此设备”。")
+                    .font(.callout)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+
+                HStack(spacing: 10) {
+                    Button("打开蓝牙设置") {
+                        openBluetoothSettings()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("已忽略，重新查找") {
+                        bluetooth.forgetRememberedDevice()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    Button("从 USB 重新安装固件") {
+                        restartFirmwareOnboarding()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+                }
+            }
+        }
+        .padding(.top, 14)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private func restartFirmwareOnboarding() {
+        firmwareUpdate.resetForOnboarding()
+        setupStep = 0
     }
 
     private var onboardingWiFiSetupCard: some View {
@@ -1830,7 +1940,7 @@ private struct BridgeRootView: View {
             }
         case .blocked where bluetooth.state.radio == .poweredOff:
             Button("打开蓝牙设置") {
-                openURL(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!)
+                openBluetoothSettings()
             }
         case .failed:
             Button("重新查找") { bluetooth.retry() }
@@ -1952,8 +2062,17 @@ private struct BridgeRootView: View {
         case "bluetooth_powered_off": "这台 Mac 的蓝牙已关闭。"
         case "bluetooth_unsupported": "这台 Mac 不支持所需的 Bluetooth Low Energy。"
         case "vendor_service_missing": "Cardputer 固件不兼容，请检查更新。"
+        case let value where value.hasPrefix("secure_pairing_failed_"):
+            "Mac 保存的配对信息已失效，请忽略旧设备后重新配对。"
         default: "无法连接 Cardputer，请重试。"
         }
+    }
+
+    private func openBluetoothSettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.BluetoothSettings"
+        ) else { return }
+        openURL(url)
     }
 }
 

@@ -50,6 +50,9 @@ def main() -> int:
     firmware_update_source = (
         macos_dir / "Sources/CardputerBridgeApp/FirmwareUpdateController.swift"
     ).read_text()
+    connection_recovery_source = (
+        macos_dir / "Sources/CardputerBridgeCore/ConnectionRecoveryGuidance.swift"
+    ).read_text()
     product_source = "\n".join((app_source, wifi_source))
     icon_manifest_path = (
         macos_dir / "Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"
@@ -185,6 +188,17 @@ def main() -> int:
             and "UserDefaults.standard.removeObject(" in ble_source
             and "forKey: Self.rememberedDeviceDefaultsKey" in ble_source
             and "func resetForOnboarding()" in firmware_update_source,
+        "pairing failure provides an actionable recovery path":
+            "忽略此设备" in app_source
+            and 'Button("打开蓝牙设置")' in app_source
+            and 'Button("已忽略，重新查找")' in app_source
+            and 'Button("从 USB 重新安装固件")' in app_source
+            and "openBluetoothSettings" in app_source
+            and "bluetooth.forgetRememberedDevice()" in app_source
+            and "ConnectionRecoveryGuidance.classify" in app_source
+            and 'fault.hasPrefix("secure_pairing_failed_")' in connection_recovery_source
+            and 'fault == "vendor_service_missing"' in connection_recovery_source
+            and "return .general" in connection_recovery_source,
         "USB gate validates a flash-capable Cardputer":
             "USBFlashTargetProbe.validatedTarget" in firmware_update_source
             and "board-info" in firmware_update_source
