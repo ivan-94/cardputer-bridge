@@ -504,6 +504,10 @@ private struct BridgeRootView: View {
                     .bridgePanel(border: BridgeTheme.warning.opacity(0.4))
                 }
 
+                if bluetooth.state.phase == .failed {
+                    deviceRecoveryCard
+                }
+
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
@@ -805,14 +809,62 @@ private struct BridgeRootView: View {
     }
 
     private var deviceConnectionDetails: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-            capability("系统键盘", value: keyboardStatus, icon: "keyboard")
-            capability("系统麦克风", value: systemMicrophonePipelineReady ? "已就绪" : "未就绪", icon: "mic")
-            capability("设备控制", value: controlStatus, icon: "lock.shield")
-            capability("Wi-Fi", value: deviceWiFiConnected ? "已连接" : "未连接", icon: "wifi")
+        VStack(spacing: 16) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                capability("系统键盘", value: keyboardStatus, icon: "keyboard")
+                capability("系统麦克风", value: systemMicrophonePipelineReady ? "已就绪" : "未就绪", icon: "mic")
+                capability("设备控制", value: controlStatus, icon: "lock.shield")
+                capability("Wi-Fi", value: deviceWiFiConnected ? "已连接" : "未连接", icon: "wifi")
+            }
+            .padding(20)
+            .bridgePanel()
+
+            deviceRecoveryCard
         }
-        .padding(20)
-        .bridgePanel()
+    }
+
+    private var deviceRecoveryCard: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "arrow.counterclockwise.circle")
+                .font(.title2)
+                .foregroundStyle(BridgeTheme.accent)
+                .frame(width: 42, height: 42)
+                .background(
+                    BridgeTheme.accent.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 11)
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text("需要重新连接 Cardputer？")
+                    .font(.headline)
+                Text("设备刷入过其他固件或配对信息失效时，请重新检测 USB、安装固件并建立连接。")
+                    .font(.caption)
+                    .foregroundStyle(BridgeTheme.secondaryText)
+            }
+            Spacer()
+            Button("重新设置 Cardputer") {
+                beginDeviceRecoverySetup()
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("restart-cardputer-setup")
+        }
+        .padding(16)
+        .bridgePanel(border: BridgeTheme.accent.opacity(0.32))
+    }
+
+    private func beginDeviceRecoverySetup() {
+        bluetooth.forgetRememberedDevice()
+        firmwareUpdate.resetForOnboarding()
+        wifiPassword = ""
+        isEditingWiFi = false
+        isEnteringHiddenWiFi = false
+        wifiProvisioningPhase = .idle
+        lastOfferedSessionID = nil
+        lastAudioOfferAttemptAt = .distantPast
+        lastConfigSyncAttemptAt = .distantPast
+        lastObservedDeviceAudioReady = false
+        selectedSection = .overview
+        setupStep = 0
+        setupCompleted = false
     }
 
     private var settingsContent: some View {

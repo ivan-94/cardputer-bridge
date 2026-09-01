@@ -39,6 +39,15 @@ final class FirmwareUpdateController: ObservableObject {
         return false
     }
 
+    func resetForOnboarding() {
+        relay?.stop()
+        relay = nil
+        release = nil
+        phase = .idle
+        usbReadiness = .idle
+        lastProbedPorts = []
+    }
+
     func refreshUSBReadiness(force: Bool = false) {
         guard usbReadiness != .checking else { return }
         let ports = localUSBSerialPorts()

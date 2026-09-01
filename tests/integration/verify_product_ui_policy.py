@@ -169,6 +169,17 @@ def main() -> int:
             and "onboarding-usb-continue" in app_source
             and "case .ready:" in app_source
             and "Button(\"继续\") { setupStep = 1 }" in app_source,
+        "disconnected devices can restart first-use setup safely":
+            'Button("重新设置 Cardputer")' in app_source
+            and "beginDeviceRecoverySetup" in app_source
+            and "bluetooth.forgetRememberedDevice()" in app_source
+            and "firmwareUpdate.resetForOnboarding()" in app_source
+            and "setupCompleted = false" in app_source
+            and "setupStep = 0" in app_source
+            and "func forgetRememberedDevice()" in ble_source
+            and "UserDefaults.standard.removeObject(" in ble_source
+            and "forKey: Self.rememberedDeviceDefaultsKey" in ble_source
+            and "func resetForOnboarding()" in firmware_update_source,
         "USB gate validates a flash-capable Cardputer":
             "USBFlashTargetProbe.validatedTarget" in firmware_update_source
             and "board-info" in firmware_update_source

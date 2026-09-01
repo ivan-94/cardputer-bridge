@@ -117,6 +117,34 @@ final class BLEBridgeController: NSObject, ObservableObject {
         dispatch(.retryRequested)
     }
 
+    func forgetRememberedDevice() {
+        let peripheral = selectedPeripheral
+        rememberedDeviceID = nil
+        reconnectDeviceID = nil
+        UserDefaults.standard.removeObject(
+            forKey: Self.rememberedDeviceDefaultsKey
+        )
+
+        central?.stopScan()
+        if let peripheral {
+            central?.cancelPeripheralConnection(peripheral)
+        }
+        clearConnectionHandles()
+        peripherals.removeAll()
+        commandFault = nil
+        reducer = BLESessionReducer()
+        state = reducer.state
+        publishRuntimeProbe()
+
+        guard let central else {
+            start()
+            return
+        }
+        if central.state == .poweredOn {
+            dispatch(.radioChanged(.poweredOn))
+        }
+    }
+
     func toggleMicrophoneIntent() {
         guard state.canSendCommand else {
             commandFault = "control_channel_not_ready"
