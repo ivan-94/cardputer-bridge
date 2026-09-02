@@ -12,6 +12,7 @@ using cardbridge::InputActionKind;
 using cardbridge::InputEffectKind;
 using cardbridge::InputRouter;
 using cardbridge::ShortcutMapping;
+using cardbridge::should_forward_after_microphone_stop;
 
 constexpr std::uint8_t kUsageQ = 0x14;
 constexpr std::uint8_t kUsageX = 0x1b;
@@ -74,6 +75,15 @@ void test_plain_and_modified_keys_can_be_shortcut_triggers() {
     require_report(modified, 0, HidReport{0x09, kUsageQ},
                    "Control+Q should invoke a different output");
     router.dispatch(action(InputActionKind::kKeyUp, 40, kUsageQ, 0x01));
+}
+
+void test_microphone_stop_consumes_down_but_never_release() {
+    require(!should_forward_after_microphone_stop(true, true),
+            "the physical press that stops recording must not reach the Mac");
+    require(should_forward_after_microphone_stop(true, false),
+            "a release must still reach the router to prevent a stuck Mac key");
+    require(should_forward_after_microphone_stop(false, true),
+            "normal key-down must remain unchanged outside recording");
 }
 
 void test_g0_alone_toggles_mic_and_sends_its_bound_shortcut() {
@@ -264,6 +274,7 @@ void test_mapping_replacement_is_atomic() {
 
 int main() {
     test_plain_key_has_balanced_reports();
+    test_microphone_stop_consumes_down_but_never_release();
     test_plain_and_modified_keys_can_be_shortcut_triggers();
     test_g0_alone_toggles_mic_and_sends_its_bound_shortcut();
     test_modifier_only_output_is_valid_and_balanced();

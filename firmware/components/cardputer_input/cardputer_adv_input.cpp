@@ -40,6 +40,7 @@ std::uint8_t CardputerAdvInput::read_register(std::uint8_t reg) const {
 
 bool CardputerAdvInput::begin() {
     ready_ = false;
+    physical_press_observed_ = false;
     fn_active_ = false;
     modifiers_ = 0;
     active_usages_ = {};
@@ -74,6 +75,7 @@ std::size_t CardputerAdvInput::poll(
     CardputerKeyEvent* output,
     std::size_t capacity
 ) {
+    physical_press_observed_ = false;
     if (!ready_ || output == nullptr || capacity == 0) {
         return 0;
     }
@@ -93,6 +95,8 @@ std::size_t CardputerAdvInput::poll(
         if (!resolved.valid) {
             continue;
         }
+        physical_press_observed_ =
+            physical_press_observed_ || physical.pressed;
         if (resolved.fn_key) {
             fn_active_ = physical.pressed;
             continue;

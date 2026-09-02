@@ -607,6 +607,28 @@ void apply_input_result(
     }
 }
 
+bool stop_microphone_for_physical_press(
+    bool physical_press_observed,
+    cardbridge::BridgeDomain& domain,
+    char* feedback,
+    std::size_t feedback_size,
+    std::uint64_t& feedback_until_ms
+) {
+    if (!physical_press_observed ||
+        domain.state().capture_gate != cardbridge::CaptureGate::kOpen) {
+        return false;
+    }
+    domain.dispatch(
+        cardbridge::BridgeAction::kMuteMicIntent,
+        cardbridge::ActionSource::kPhysicalInput
+    );
+    cardbridge::device_audio_set_capture_enabled(false);
+    publish_state(domain.state());
+    std::snprintf(feedback, feedback_size, "Microphone muted");
+    feedback_until_ms = uptime_ms() + 1200;
+    return true;
+}
+
 std::uint64_t ui_signature(
     const cardbridge::BridgeState& state,
     const cardbridge::DeviceAudioStatus& audio,
@@ -799,7 +821,7 @@ void draw_screen(
     } else {
         canvas.setTextColor(streaming ? red : text_secondary, surface);
         canvas.setCursor(16, 102);
-        canvas.print(streaming ? "G0  mute microphone" : "G0  unmute microphone");
+        canvas.print(streaming ? "ANY KEY  mute microphone" : "G0  unmute microphone");
     }
     if (!keyboard_ready) {
         canvas.setTextColor(red, background);
@@ -1254,7 +1276,14 @@ extern "C" void app_main() {
 
         if (M5.BtnA.wasPressed()) {
             should_wake_display = true;
-            if (pairing.visible) {
+            if (stop_microphone_for_physical_press(
+                    true,
+                    domain,
+                    feedback,
+                    sizeof(feedback),
+                    feedback_until_ms)) {
+                pairing_g0_press = false;
+            } else if (pairing.visible) {
                 pairing_g0_press = true;
             } else {
                 apply_input_result(
@@ -1288,11 +1317,24 @@ extern "C" void app_main() {
 
         std::array<cardbridge::CardputerKeyEvent, 16> key_events{};
         const auto key_event_count = keyboard.poll(key_events.data(), key_events.size());
-        if (key_event_count > 0) {
+        const bool keyboard_physical_press = keyboard.physical_press_observed();
+        if (key_event_count > 0 || keyboard_physical_press) {
             should_wake_display = true;
         }
+        const bool keyboard_press_consumed = stop_microphone_for_physical_press(
+            keyboard_physical_press,
+            domain,
+            feedback,
+            sizeof(feedback),
+            feedback_until_ms
+        );
         for (std::size_t index = 0; index < key_event_count; ++index) {
             const auto& event = key_events[index];
+            if (!cardbridge::should_forward_after_microphone_stop(
+                    keyboard_press_consumed,
+                    event.pressed)) {
+                continue;
+            }
             apply_input_result(
                 input_router.dispatch(cardbridge::InputAction{
                     event.pressed

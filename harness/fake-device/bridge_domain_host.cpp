@@ -18,6 +18,8 @@ const char* action_name(cardbridge::BridgeAction value) {
     switch (value) {
         case cardbridge::BridgeAction::kToggleMicIntent:
             return "toggle_mic_intent";
+        case cardbridge::BridgeAction::kMuteMicIntent:
+            return "mute_mic_intent";
         case cardbridge::BridgeAction::kControlLinkAuthenticated:
             return "control_link_authenticated";
         case cardbridge::BridgeAction::kControlLinkLost:
@@ -40,6 +42,8 @@ const char* source_name(cardbridge::ActionSource value) {
             return "harness";
         case cardbridge::ActionSource::kBleControl:
             return "ble_control";
+        case cardbridge::ActionSource::kPhysicalInput:
+            return "physical_input";
     }
     return "unknown";
 }
@@ -162,6 +166,13 @@ int main() {
                     domain.dispatch(
                         cardbridge::BridgeAction::kToggleMicIntent,
                         cardbridge::ActionSource::kHarness),
+                    *request_id);
+            } else if (action && source && *action == "mute_mic_intent" &&
+                       *source == "physical_input") {
+                emit_transition(
+                    domain.dispatch(
+                        cardbridge::BridgeAction::kMuteMicIntent,
+                        cardbridge::ActionSource::kPhysicalInput),
                     *request_id);
             } else if (action && source && *action == "control_link_lost" && *source == "ble_control") {
                 emit_transition(

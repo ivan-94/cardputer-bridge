@@ -20,6 +20,7 @@ enum class ResetProfile {
 
 enum class BridgeAction {
     kToggleMicIntent,
+    kMuteMicIntent,
     kControlLinkAuthenticated,
     kControlLinkLost,
     kWifiAudioAuthenticated,
@@ -31,6 +32,7 @@ enum class BridgeAction {
 enum class ActionSource {
     kHarness,
     kBleControl,
+    kPhysicalInput,
 };
 
 struct BridgeState {

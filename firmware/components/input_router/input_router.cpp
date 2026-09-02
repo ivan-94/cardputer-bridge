@@ -20,6 +20,13 @@ bool valid_output(const ShortcutMapping& mapping) {
 
 }  // namespace
 
+bool should_forward_after_microphone_stop(
+    bool microphone_stop_consumed,
+    bool pressed
+) {
+    return !microphone_stop_consumed || !pressed;
+}
+
 bool InputRouter::replace_mappings(
     const ShortcutMapping* mappings,
     std::size_t count

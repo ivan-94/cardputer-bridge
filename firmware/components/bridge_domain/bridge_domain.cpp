@@ -41,6 +41,9 @@ DispatchResult BridgeDomain::dispatch(BridgeAction action, ActionSource source) 
                 ? MicIntent::kLive
                 : MicIntent::kMuted;
             break;
+        case BridgeAction::kMuteMicIntent:
+            state_.mic_intent = MicIntent::kMuted;
+            break;
         case BridgeAction::kControlLinkAuthenticated:
             state_.ble_control_authenticated = true;
             break;

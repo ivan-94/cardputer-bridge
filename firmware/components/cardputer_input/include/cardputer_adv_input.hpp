@@ -21,12 +21,14 @@ public:
 
     bool ready() const { return ready_; }
     std::uint8_t modifiers() const { return modifiers_; }
+    bool physical_press_observed() const { return physical_press_observed_; }
 
 private:
     bool write_register(std::uint8_t reg, std::uint8_t value);
     std::uint8_t read_register(std::uint8_t reg) const;
 
     bool ready_{false};
+    bool physical_press_observed_{false};
     bool fn_active_{false};
     std::uint8_t modifiers_{0};
     std::array<std::array<std::uint8_t, 14>, 4> active_usages_{};

@@ -53,6 +53,24 @@ int main() {
     require(authorized_result.state.capture_gate == cardbridge::CaptureGate::kOpen,
             "capture should open only when every authorization input is ready");
 
+    const auto physical_key_result = domain.dispatch(
+        cardbridge::BridgeAction::kMuteMicIntent,
+        cardbridge::ActionSource::kPhysicalInput
+    );
+    require(physical_key_result.state.mic_intent == cardbridge::MicIntent::kMuted,
+            "any physical key should mute an active microphone");
+    require(physical_key_result.state.capture_gate == cardbridge::CaptureGate::kClosed,
+            "a physical-key mute must close capture immediately");
+    require(physical_key_result.event.source == cardbridge::ActionSource::kPhysicalInput,
+            "the mute event should preserve the physical input source");
+
+    const auto repeated_physical_key_result = domain.dispatch(
+        cardbridge::BridgeAction::kMuteMicIntent,
+        cardbridge::ActionSource::kPhysicalInput
+    );
+    require(repeated_physical_key_result.state.mic_intent == cardbridge::MicIntent::kMuted,
+            "physical-key mute must be idempotent and never reopen the microphone");
+
     const auto disconnected_result = domain.dispatch(
         cardbridge::BridgeAction::kControlLinkLost,
         cardbridge::ActionSource::kBleControl
@@ -88,6 +106,7 @@ int main() {
     std::cout << "PASS bridge_domain_boot_unpaired_then_authenticated\n";
     std::cout << "PASS bridge_domain_fail_closed_without_links\n";
     std::cout << "PASS bridge_domain_opens_when_authorized\n";
+    std::cout << "PASS bridge_domain_physical_key_mute_is_idempotent\n";
     std::cout << "PASS bridge_domain_control_loss_fails_closed\n";
     std::cout << "PASS bridge_domain_wifi_audio_loss_fails_closed\n";
     return EXIT_SUCCESS;

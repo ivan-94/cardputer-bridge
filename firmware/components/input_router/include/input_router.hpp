@@ -64,6 +64,11 @@ struct InputResult {
     std::size_t count{0};
 };
 
+bool should_forward_after_microphone_stop(
+    bool microphone_stop_consumed,
+    bool pressed
+);
+
 class InputRouter {
 public:
     bool replace_mappings(const ShortcutMapping* mappings, std::size_t count);
