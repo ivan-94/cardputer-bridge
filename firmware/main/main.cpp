@@ -58,6 +58,10 @@ constexpr std::uint64_t kShortcutFeedbackDurationMs = 850;
 constexpr std::uint64_t kDisplayDimAfterMs = 15'000;
 constexpr std::uint64_t kDisplayOffAfterMs = 30'000;
 constexpr std::uint64_t kBatterySampleIntervalMs = 10'000;
+// Keep live feedback responsive without returning to an unbounded full-frame
+// redraw. Ten visual updates per second still leave most core-0 time to the
+// Wi-Fi/BLE stacks while making the meter track speech within about 100 ms.
+constexpr std::uint64_t kLiveWaveformIntervalMs = 100;
 constexpr std::uint32_t kActiveLoopIntervalMs = 10;
 constexpr std::uint32_t kIdleLoopIntervalMs = 20;
 std::atomic_int g_remote_mic_intent_requested{kNoRemoteMicIntent};
@@ -764,13 +768,13 @@ void draw_screen(
     const float raw_level = std::max(1.0f, static_cast<float>(audio.signal_level));
     const float decibels = 20.0f * std::log10(raw_level / 1000.0f);
     const float perceptual_level = streaming
-        ? std::clamp((decibels + 72.0f) / 60.0f, 0.0f, 1.0f)
+        ? std::clamp((decibels + 60.0f) / 42.0f, 0.0f, 1.0f)
         : 0.0f;
     static float displayed_level = 0.0f;
-    const float smoothing = perceptual_level > displayed_level ? 0.48f : 0.16f;
+    const float smoothing = perceptual_level > displayed_level ? 0.68f : 0.30f;
     displayed_level += (perceptual_level - displayed_level) * smoothing;
     const std::uint32_t visual_level = streaming
-        ? static_cast<std::uint32_t>(180.0f + displayed_level * 820.0f)
+        ? static_cast<std::uint32_t>(60.0f + displayed_level * 940.0f)
         : 0;
     for (std::size_t index = 0; index < kWaveShape.size(); ++index) {
         const auto shape = kWaveShape[(index + wave_phase) % kWaveShape.size()];
@@ -1659,7 +1663,7 @@ extern "C" void app_main() {
                 wave_phase++
             );
             last_ui_signature = current_ui_signature;
-            next_wave_draw_ms = now + 50;
+            next_wave_draw_ms = now + kLiveWaveformIntervalMs;
         }
         const auto loop_interval_ms =
             display_power_state == DisplayPowerState::kOff && !capture_live
