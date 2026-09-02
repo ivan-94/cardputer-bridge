@@ -65,6 +65,8 @@ const char* action_name(cardbridge::InputActionKind kind) {
             return "g0_down";
         case cardbridge::InputActionKind::kG0Up:
             return "g0_up";
+        case cardbridge::InputActionKind::kG0UpShortcutOnly:
+            return "g0_up_shortcut_only";
         case cardbridge::InputActionKind::kKeyDown:
             return "key_down";
         case cardbridge::InputActionKind::kKeyUp:

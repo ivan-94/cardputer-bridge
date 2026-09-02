@@ -1000,6 +1000,7 @@ extern "C" void app_main() {
     std::uint8_t wave_phase = 0;
     bool pairing_g0_press = false;
     bool activation_g0_press_ignored = false;
+    bool g0_press_stopped_microphone = false;
     std::uint64_t g0_activation_guard_until_ms = 0;
     bool last_authenticated = false;
     cardbridge::ControlLease control_lease;
@@ -1291,42 +1292,54 @@ extern "C" void app_main() {
             if (activation_transaction_active) {
                 activation_g0_press_ignored = true;
                 pairing_g0_press = false;
-            } else if (stop_microphone_for_physical_press(
+                g0_press_stopped_microphone = false;
+            } else {
+                const bool stopped_microphone = stop_microphone_for_physical_press(
                     true,
                     false,
                     domain,
                     feedback,
                     sizeof(feedback),
-                    feedback_until_ms)) {
-                pairing_g0_press = false;
-            } else if (pairing.visible) {
-                pairing_g0_press = true;
-            } else {
-                apply_input_result(
-                    input_router.dispatch(cardbridge::InputAction{
-                        cardbridge::InputActionKind::kG0Down, 0, 0, now}),
-                    domain,
-                    feedback,
-                    sizeof(feedback),
                     feedback_until_ms
                 );
+                if (pairing.visible && !stopped_microphone) {
+                    pairing_g0_press = true;
+                    g0_press_stopped_microphone = false;
+                } else {
+                    pairing_g0_press = false;
+                    g0_press_stopped_microphone = stopped_microphone;
+                    apply_input_result(
+                        input_router.dispatch(cardbridge::InputAction{
+                            cardbridge::InputActionKind::kG0Down, 0, 0, now}),
+                        domain,
+                        feedback,
+                        sizeof(feedback),
+                        feedback_until_ms
+                    );
+                }
             }
         }
         if (M5.BtnA.wasReleased()) {
             should_wake_display = true;
             if (activation_g0_press_ignored) {
                 activation_g0_press_ignored = false;
+                g0_press_stopped_microphone = false;
             } else if (pairing_g0_press) {
                 if (pairing.visible && pairing.needs_confirmation) {
                     (void)ble_bridge_confirm_pairing(true);
                 }
                 pairing_g0_press = false;
+                g0_press_stopped_microphone = false;
             } else {
                 const bool capture_was_open =
                     domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
+                const auto release_kind = g0_press_stopped_microphone
+                    ? cardbridge::InputActionKind::kG0UpShortcutOnly
+                    : cardbridge::InputActionKind::kG0Up;
+                g0_press_stopped_microphone = false;
                 apply_input_result(
                     input_router.dispatch(cardbridge::InputAction{
-                        cardbridge::InputActionKind::kG0Up, 0, 0, now}),
+                        release_kind, 0, 0, now}),
                     domain,
                     feedback,
                     sizeof(feedback),
@@ -1348,11 +1361,10 @@ extern "C" void app_main() {
         const bool activation_transaction_active =
             now < g0_activation_guard_until_ms &&
             domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
-        const bool keyboard_press_consumed =
-            (keyboard_physical_press && activation_transaction_active) ||
+        const bool keyboard_stopped_microphone =
             stop_microphone_for_physical_press(
                 keyboard_physical_press,
-                false,
+                activation_transaction_active,
                 domain,
                 feedback,
                 sizeof(feedback),
@@ -1361,7 +1373,7 @@ extern "C" void app_main() {
         for (std::size_t index = 0; index < key_event_count; ++index) {
             const auto& event = key_events[index];
             if (!cardbridge::should_forward_after_microphone_stop(
-                    keyboard_press_consumed,
+                    keyboard_stopped_microphone,
                     event.pressed)) {
                 continue;
             }

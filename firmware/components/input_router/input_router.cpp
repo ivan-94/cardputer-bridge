@@ -21,10 +21,14 @@ bool valid_output(const ShortcutMapping& mapping) {
 }  // namespace
 
 bool should_forward_after_microphone_stop(
-    bool microphone_stop_consumed,
+    bool microphone_was_stopped,
     bool pressed
 ) {
-    return !microphone_stop_consumed || !pressed;
+    // Muting capture is a side effect of the physical input, not ownership of
+    // that input. Both key-down and key-up continue through the HID router.
+    (void)microphone_was_stopped;
+    (void)pressed;
+    return true;
 }
 
 bool should_stop_microphone_for_physical_press(
@@ -126,7 +130,8 @@ InputResult InputRouter::dispatch(const InputAction& action) {
             g0_down_at_ms_ = action.at_ms;
             return result;
 
-        case InputActionKind::kG0Up: {
+        case InputActionKind::kG0Up:
+        case InputActionKind::kG0UpShortcutOnly: {
             if (!g0_down_) {
                 return result;
             }
@@ -151,7 +156,6 @@ InputResult InputRouter::dispatch(const InputAction& action) {
                 ? action.at_ms - g0_down_at_ms_
                 : kG0ShortPressMaxMs + 1;
             if (!g0_chord_consumed_ && duration <= kG0ShortPressMaxMs) {
-                append_effect(result, InputEffectKind::kToggleMicIntent);
                 const ShortcutMapping* mapping = mapping_for(true, 0, 0);
                 if (mapping != nullptr) {
                     active_report_ = HidReport{
@@ -173,6 +177,14 @@ InputResult InputRouter::dispatch(const InputAction& action) {
                     );
                     active_report_ = {};
                     append_effect(result, InputEffectKind::kHidReport, {});
+                }
+                // Treat a mapped G0 press as one ordered transaction: finish
+                // the synthetic Mac shortcut, including its all-keys-up
+                // report, before opening capture. This keeps generated HID
+                // events outside the live microphone window; only a later
+                // physical press may stop the recording it just started.
+                if (action.kind == InputActionKind::kG0Up) {
+                    append_effect(result, InputEffectKind::kToggleMicIntent);
                 }
             }
             g0_down_ = false;

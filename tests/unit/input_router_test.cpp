@@ -78,9 +78,9 @@ void test_plain_and_modified_keys_can_be_shortcut_triggers() {
     router.dispatch(action(InputActionKind::kKeyUp, 40, kUsageQ, 0x01));
 }
 
-void test_microphone_stop_consumes_down_but_never_release() {
-    require(!should_forward_after_microphone_stop(true, true),
-            "the physical press that stops recording must not reach the Mac");
+void test_microphone_stop_preserves_the_physical_key_for_mac() {
+    require(should_forward_after_microphone_stop(true, true),
+            "the physical press that stops recording must still reach the Mac");
     require(should_forward_after_microphone_stop(true, false),
             "a release must still reach the router to prevent a stuck Mac key");
     require(should_forward_after_microphone_stop(false, true),
@@ -107,19 +107,40 @@ void test_g0_alone_toggles_mic_and_sends_its_bound_shortcut() {
     const auto up = router.dispatch(action(InputActionKind::kG0Up, 200));
 
     require(up.count == 4,
-            "G0 alone should toggle mic, send a balanced output, and expose feedback");
-    require(up.effects[0].kind == InputEffectKind::kToggleMicIntent,
-            "G0 alone must preserve the microphone toggle");
-    require_report(up, 1, HidReport{0x08, 0x2c},
-                   "G0 alone should send its configured Mac shortcut");
-    require(up.effects[2].kind == InputEffectKind::kShortcutFeedback,
+            "G0 alone should send a balanced output, expose feedback, and toggle mic");
+    require_report(up, 0, HidReport{0x08, 0x2c},
+                   "G0 alone should send its configured Mac shortcut before recording");
+    require(up.effects[1].kind == InputEffectKind::kShortcutFeedback,
             "G0 alone mapping should expose shortcut feedback");
-    require(up.effects[2].trigger_includes_g0 &&
-            up.effects[2].trigger_modifiers == 0 &&
-            up.effects[2].trigger_usage == 0,
+    require(up.effects[1].trigger_includes_g0 &&
+            up.effects[1].trigger_modifiers == 0 &&
+            up.effects[1].trigger_usage == 0,
             "G0-alone feedback must preserve the physical trigger");
-    require_report(up, 3, HidReport{0, 0},
-                   "G0-alone shortcut must have a balanced HID release");
+    require_report(up, 2, HidReport{0, 0},
+                   "G0-alone shortcut must release HID before recording starts");
+    require(up.effects[3].kind == InputEffectKind::kToggleMicIntent,
+            "G0 alone must open the microphone only after shortcut release");
+}
+
+void test_g0_that_stops_recording_sends_shortcut_without_reopening_mic() {
+    InputRouter router;
+    const std::array<ShortcutMapping, 1> mappings{{
+        ShortcutMapping{true, 0, 0, 0x08, 0x2c, true},
+    }};
+    require(router.replace_mappings(mappings.data(), mappings.size()),
+            "G0 alone must be a valid trigger");
+    router.dispatch(action(InputActionKind::kG0Down, 100));
+    const auto up = router.dispatch(
+        action(InputActionKind::kG0UpShortcutOnly, 200));
+
+    require(up.count == 3,
+            "G0 used to stop recording should only send its mapped shortcut");
+    require_report(up, 0, HidReport{0x08, 0x2c},
+                   "recording-stop G0 should still reach the Mac");
+    require(up.effects[1].kind == InputEffectKind::kShortcutFeedback,
+            "recording-stop G0 should expose shortcut feedback");
+    require_report(up, 2, HidReport{0, 0},
+                   "recording-stop G0 should release its Mac shortcut");
 }
 
 void test_modifier_only_output_is_valid_and_balanced() {
@@ -284,10 +305,11 @@ void test_mapping_replacement_is_atomic() {
 
 int main() {
     test_plain_key_has_balanced_reports();
-    test_microphone_stop_consumes_down_but_never_release();
+    test_microphone_stop_preserves_the_physical_key_for_mac();
     test_g0_activation_transaction_cannot_immediately_stop_microphone();
     test_plain_and_modified_keys_can_be_shortcut_triggers();
     test_g0_alone_toggles_mic_and_sends_its_bound_shortcut();
+    test_g0_that_stops_recording_sends_shortcut_without_reopening_mic();
     test_modifier_only_output_is_valid_and_balanced();
     test_learning_accepts_only_cardputer_physical_input();
     test_learning_can_capture_g0_alone_without_toggling_mic();

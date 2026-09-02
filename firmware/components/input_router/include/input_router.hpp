@@ -27,6 +27,7 @@ struct HidReport {
 enum class InputActionKind {
     kG0Down,
     kG0Up,
+    kG0UpShortcutOnly,
     kKeyDown,
     kKeyUp,
     kBleAuthenticated,
@@ -65,7 +66,7 @@ struct InputResult {
 };
 
 bool should_forward_after_microphone_stop(
-    bool microphone_stop_consumed,
+    bool microphone_was_stopped,
     bool pressed
 );
 
