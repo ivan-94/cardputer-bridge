@@ -8,6 +8,7 @@ namespace cardbridge {
 
 constexpr std::size_t kMaxShortcutMappings = 32;
 constexpr std::uint64_t kG0ShortPressMaxMs = 350;
+constexpr std::uint64_t kG0StableReleaseMs = 150;
 constexpr std::uint64_t kShortcutLearningTimeoutMs = 15000;
 
 struct ShortcutMapping {
@@ -72,9 +73,25 @@ bool should_forward_after_microphone_stop(
 
 bool should_stop_microphone_for_physical_press(
     bool physical_press_observed,
-    bool capture_open,
+    bool live_intent,
     bool activation_transaction_active
 );
+
+// A recording starts on G0 release. Require that release to remain stable
+// before a later press can stop it, so switch bounce cannot become a second
+// user action merely because a fixed post-activation timer elapsed.
+class G0RecordingStopGuard {
+public:
+    void recording_started(std::uint64_t now_ms);
+    void observe_button(bool released, std::uint64_t now_ms);
+    void consume_stop();
+    bool stop_armed() const { return stop_armed_; }
+
+private:
+    bool stop_armed_{false};
+    bool release_tracking_{false};
+    std::uint64_t released_since_ms_{0};
+};
 
 class InputRouter {
 public:

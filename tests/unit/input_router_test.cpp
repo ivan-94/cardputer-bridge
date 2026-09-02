@@ -11,6 +11,7 @@ using cardbridge::InputAction;
 using cardbridge::InputActionKind;
 using cardbridge::InputEffectKind;
 using cardbridge::InputRouter;
+using cardbridge::G0RecordingStopGuard;
 using cardbridge::ShortcutMapping;
 using cardbridge::should_forward_after_microphone_stop;
 using cardbridge::should_stop_microphone_for_physical_press;
@@ -93,7 +94,32 @@ void test_g0_activation_transaction_cannot_immediately_stop_microphone() {
     require(should_stop_microphone_for_physical_press(true, true, false),
             "a fresh physical press after activation must stop the microphone");
     require(!should_stop_microphone_for_physical_press(true, false, false),
-            "a physical press cannot stop an already closed capture gate");
+            "a physical press cannot stop an already muted intent");
+}
+
+void test_g0_stop_requires_a_new_press_after_a_stable_release() {
+    G0RecordingStopGuard guard;
+    guard.recording_started(100);
+
+    require(!guard.stop_armed(),
+            "the release that starts recording must not also arm a stop");
+    guard.observe_button(true, 249);
+    require(!guard.stop_armed(),
+            "G0 must remain unarmed before a stable release interval completes");
+
+    // A bounce restarts the release interval instead of becoming a new stop.
+    guard.observe_button(false, 250);
+    guard.observe_button(true, 251);
+    guard.observe_button(true, 400);
+    require(!guard.stop_armed(),
+            "a bounced release must complete a fresh stable interval");
+    guard.observe_button(true, 401);
+    require(guard.stop_armed(),
+            "a clean released G0 should arm the next deliberate press");
+
+    guard.consume_stop();
+    require(!guard.stop_armed(),
+            "consuming a deliberate stop must disarm the current transaction");
 }
 
 void test_g0_alone_toggles_mic_and_sends_its_bound_shortcut() {
@@ -307,6 +333,7 @@ int main() {
     test_plain_key_has_balanced_reports();
     test_microphone_stop_preserves_the_physical_key_for_mac();
     test_g0_activation_transaction_cannot_immediately_stop_microphone();
+    test_g0_stop_requires_a_new_press_after_a_stable_release();
     test_plain_and_modified_keys_can_be_shortcut_triggers();
     test_g0_alone_toggles_mic_and_sends_its_bound_shortcut();
     test_g0_that_stops_recording_sends_shortcut_without_reopening_mic();

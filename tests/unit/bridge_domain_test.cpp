@@ -100,14 +100,41 @@ int main() {
     );
     require(domain.state().capture_gate == cardbridge::CaptureGate::kClosed,
             "Wi-Fi loss must close capture");
+    require(domain.state().mic_intent == cardbridge::MicIntent::kLive,
+            "transient Wi-Fi loss must preserve the user's live intent");
+    domain.dispatch(
+        cardbridge::BridgeAction::kWifiAudioAuthenticated,
+        cardbridge::ActionSource::kBleControl
+    );
+    require(domain.state().capture_gate == cardbridge::CaptureGate::kOpen,
+            "capture should resume when Wi-Fi recovers and live intent remains");
+
+    domain.dispatch(
+        cardbridge::BridgeAction::kAudioSinkLost,
+        cardbridge::ActionSource::kBleControl
+    );
+    require(domain.state().capture_gate == cardbridge::CaptureGate::kClosed,
+            "audio-sink loss must close capture");
+    require(domain.state().mic_intent == cardbridge::MicIntent::kLive,
+            "transient audio-sink loss must preserve the user's live intent");
+    domain.dispatch(
+        cardbridge::BridgeAction::kMuteMicIntent,
+        cardbridge::ActionSource::kPhysicalInput
+    );
     require(domain.state().mic_intent == cardbridge::MicIntent::kMuted,
-            "Wi-Fi loss must fail closed to muted");
+            "a physical key during an outage must cancel the user's live intent");
+    domain.dispatch(
+        cardbridge::BridgeAction::kAudioSinkReady,
+        cardbridge::ActionSource::kBleControl
+    );
+    require(domain.state().capture_gate == cardbridge::CaptureGate::kClosed,
+            "capture must stay closed after the user cancels during an outage");
 
     std::cout << "PASS bridge_domain_boot_unpaired_then_authenticated\n";
     std::cout << "PASS bridge_domain_fail_closed_without_links\n";
     std::cout << "PASS bridge_domain_opens_when_authorized\n";
     std::cout << "PASS bridge_domain_physical_key_mute_is_idempotent\n";
     std::cout << "PASS bridge_domain_control_loss_fails_closed\n";
-    std::cout << "PASS bridge_domain_wifi_audio_loss_fails_closed\n";
+    std::cout << "PASS bridge_domain_transient_audio_links_preserve_live_intent\n";
     return EXIT_SUCCESS;
 }

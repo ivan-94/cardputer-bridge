@@ -4,10 +4,11 @@ namespace cardbridge {
 
 namespace {
 
-// macOS may negotiate a power-saving BLE connection whose acknowledged GATT
-// write cadence is roughly 300-350 ms. Keep three observed delivery windows of
-// margin while still failing closed quickly when the App disappears.
-constexpr std::uint64_t kLiveLeaseMilliseconds = 1'200;
+// BLE and Wi-Fi share one 2.4 GHz radio. Live heartbeats arrive every three
+// seconds while UDP audio is live. Keep five delivery windows so several
+// delayed acknowledged writes cannot turn a physical G0 recording into an
+// unsolicited mute, while a vanished App still fails closed.
+constexpr std::uint64_t kLiveLeaseMilliseconds = 15'000;
 constexpr std::uint64_t kMutedLeaseMilliseconds = 3'000;
 
 }  // namespace

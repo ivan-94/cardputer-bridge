@@ -33,12 +33,45 @@ bool should_forward_after_microphone_stop(
 
 bool should_stop_microphone_for_physical_press(
     bool physical_press_observed,
-    bool capture_open,
+    bool live_intent,
     bool activation_transaction_active
 ) {
     return physical_press_observed &&
-        capture_open &&
+        live_intent &&
         !activation_transaction_active;
+}
+
+void G0RecordingStopGuard::recording_started(std::uint64_t now_ms) {
+    stop_armed_ = false;
+    release_tracking_ = true;
+    released_since_ms_ = now_ms;
+}
+
+void G0RecordingStopGuard::observe_button(
+    bool released,
+    std::uint64_t now_ms
+) {
+    if (stop_armed_) return;
+    if (!released) {
+        release_tracking_ = false;
+        released_since_ms_ = 0;
+        return;
+    }
+    if (!release_tracking_) {
+        release_tracking_ = true;
+        released_since_ms_ = now_ms;
+        return;
+    }
+    if (now_ms >= released_since_ms_ &&
+        now_ms - released_since_ms_ >= kG0StableReleaseMs) {
+        stop_armed_ = true;
+    }
+}
+
+void G0RecordingStopGuard::consume_stop() {
+    stop_armed_ = false;
+    release_tracking_ = false;
+    released_since_ms_ = 0;
 }
 
 bool InputRouter::replace_mappings(

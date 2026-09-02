@@ -56,14 +56,12 @@ DispatchResult BridgeDomain::dispatch(BridgeAction action, ActionSource source) 
             break;
         case BridgeAction::kWifiAudioLost:
             state_.wifi_audio_authenticated = false;
-            state_.mic_intent = MicIntent::kMuted;
             break;
         case BridgeAction::kAudioSinkReady:
             state_.virtual_mic_ready = true;
             break;
         case BridgeAction::kAudioSinkLost:
             state_.virtual_mic_ready = false;
-            state_.mic_intent = MicIntent::kMuted;
             break;
     }
 

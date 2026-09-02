@@ -27,12 +27,15 @@ int main() {
     lease.authenticate(1'000);
     lease.heartbeat(1'000);
 
-    require(!lease.expired(2'199, cardbridge::MicIntent::kLive),
-            "a live control lease must remain valid before 1200 ms");
-    require(lease.expired(2'200, cardbridge::MicIntent::kLive),
-            "a live control lease must expire at 1200 ms without a heartbeat");
+    // A live heartbeat is scheduled every three seconds. Losing several
+    // acknowledged BLE writes while Wi-Fi audio owns the shared radio must not
+    // turn a physical G0 recording into an unsolicited mute.
+    require(!lease.expired(15'999, cardbridge::MicIntent::kLive),
+            "a live control lease must tolerate four missed heartbeat cycles");
+    require(lease.expired(16'000, cardbridge::MicIntent::kLive),
+            "a live control lease must eventually fail closed after 15000 ms");
 
-    if (lease.expired(2'200, cardbridge::MicIntent::kLive)) {
+    if (lease.expired(16'000, cardbridge::MicIntent::kLive)) {
         domain.dispatch(
             cardbridge::BridgeAction::kControlLinkLost,
             cardbridge::ActionSource::kBleControl

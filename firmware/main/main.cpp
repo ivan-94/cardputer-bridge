@@ -55,10 +55,7 @@ constexpr std::uint8_t kRecordingLedGreen = 60;
 constexpr std::uint8_t kRecordingLedBlue = 16;
 constexpr char kRecordingLedDriveRgb[] = "#FF3C10";
 constexpr std::uint64_t kShortcutFeedbackDurationMs = 850;
-// G0 both opens capture and emits its configured Mac shortcut. Treat the
-// release plus any switch bounce or queued matrix edge as one activation
-// transaction, so only a later physical press can close capture again.
-constexpr std::uint64_t kG0ActivationGuardMs = 120;
+constexpr std::uint32_t kG0DebounceMs = 30;
 constexpr std::uint64_t kDisplayDimAfterMs = 15'000;
 constexpr std::uint64_t kDisplayOffAfterMs = 30'000;
 constexpr std::uint64_t kBatterySampleIntervalMs = 10'000;
@@ -621,7 +618,7 @@ bool stop_microphone_for_physical_press(
 ) {
     if (!cardbridge::should_stop_microphone_for_physical_press(
             physical_press_observed,
-            domain.state().capture_gate == cardbridge::CaptureGate::kOpen,
+            domain.state().mic_intent == cardbridge::MicIntent::kLive,
             activation_transaction_active)) {
         return false;
     }
@@ -845,6 +842,10 @@ extern "C" void app_main() {
     config.internal_mic = true;
     config.internal_spk = false;
     M5.begin(config);
+    // M5Unified's 10 ms default can be bypassed when a busy loop iteration
+    // itself exceeds that interval. Keep the threshold above the normal loop
+    // cadence so a raw G0 spike cannot become a second logical press.
+    M5.BtnA.setDebounceThresh(kG0DebounceMs);
     M5.Display.setBrightness(kDisplayActiveBrightness);
     g_battery_level.store(
         std::clamp<std::int32_t>(M5.Power.getBatteryLevel(), -1, 100),
@@ -1001,7 +1002,7 @@ extern "C" void app_main() {
     bool pairing_g0_press = false;
     bool activation_g0_press_ignored = false;
     bool g0_press_stopped_microphone = false;
-    std::uint64_t g0_activation_guard_until_ms = 0;
+    cardbridge::G0RecordingStopGuard g0_recording_stop_guard;
     bool last_authenticated = false;
     cardbridge::ControlLease control_lease;
     std::array<char, 64> serial_line{};
@@ -1284,11 +1285,12 @@ extern "C" void app_main() {
             last_audio_receiver_ready = audio_status.receiver_ready;
         }
 
+        g0_recording_stop_guard.observe_button(M5.BtnA.isReleased(), now);
         if (M5.BtnA.wasPressed()) {
             should_wake_display = true;
             const bool activation_transaction_active =
-                now < g0_activation_guard_until_ms &&
-                domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
+                domain.state().mic_intent == cardbridge::MicIntent::kLive &&
+                !g0_recording_stop_guard.stop_armed();
             if (activation_transaction_active) {
                 activation_g0_press_ignored = true;
                 pairing_g0_press = false;
@@ -1302,6 +1304,9 @@ extern "C" void app_main() {
                     sizeof(feedback),
                     feedback_until_ms
                 );
+                if (stopped_microphone) {
+                    g0_recording_stop_guard.consume_stop();
+                }
                 if (pairing.visible && !stopped_microphone) {
                     pairing_g0_press = true;
                     g0_press_stopped_microphone = false;
@@ -1331,8 +1336,8 @@ extern "C" void app_main() {
                 pairing_g0_press = false;
                 g0_press_stopped_microphone = false;
             } else {
-                const bool capture_was_open =
-                    domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
+                const bool intent_was_live =
+                    domain.state().mic_intent == cardbridge::MicIntent::kLive;
                 const auto release_kind = g0_press_stopped_microphone
                     ? cardbridge::InputActionKind::kG0UpShortcutOnly
                     : cardbridge::InputActionKind::kG0Up;
@@ -1345,9 +1350,9 @@ extern "C" void app_main() {
                     sizeof(feedback),
                     feedback_until_ms
                 );
-                if (!capture_was_open &&
-                    domain.state().capture_gate == cardbridge::CaptureGate::kOpen) {
-                    g0_activation_guard_until_ms = now + kG0ActivationGuardMs;
+                if (!intent_was_live &&
+                    domain.state().mic_intent == cardbridge::MicIntent::kLive) {
+                    g0_recording_stop_guard.recording_started(now);
                 }
             }
         }
@@ -1358,13 +1363,10 @@ extern "C" void app_main() {
         if (key_event_count > 0 || keyboard_physical_press) {
             should_wake_display = true;
         }
-        const bool activation_transaction_active =
-            now < g0_activation_guard_until_ms &&
-            domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
         const bool keyboard_stopped_microphone =
             stop_microphone_for_physical_press(
                 keyboard_physical_press,
-                activation_transaction_active,
+                false,
                 domain,
                 feedback,
                 sizeof(feedback),
