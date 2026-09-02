@@ -27,6 +27,16 @@ bool should_forward_after_microphone_stop(
     return !microphone_stop_consumed || !pressed;
 }
 
+bool should_stop_microphone_for_physical_press(
+    bool physical_press_observed,
+    bool capture_open,
+    bool activation_transaction_active
+) {
+    return physical_press_observed &&
+        capture_open &&
+        !activation_transaction_active;
+}
+
 bool InputRouter::replace_mappings(
     const ShortcutMapping* mappings,
     std::size_t count

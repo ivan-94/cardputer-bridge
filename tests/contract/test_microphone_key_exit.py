@@ -35,7 +35,7 @@ class MicrophoneKeyExitContractTests(unittest.TestCase):
         self.assertIn("stop_microphone_for_physical_press", main)
         self.assertIn("keyboard.physical_press_observed()", main)
         self.assertIn(
-            "domain.state().capture_gate != cardbridge::CaptureGate::kOpen",
+            "domain.state().capture_gate == cardbridge::CaptureGate::kOpen",
             main,
         )
         self.assertIn(
@@ -45,6 +45,13 @@ class MicrophoneKeyExitContractTests(unittest.TestCase):
             main,
         )
         self.assertIn('"ANY KEY  mute microphone"', main)
+        self.assertIn("kG0ActivationGuardMs", main)
+        self.assertIn("activation_g0_press_ignored", main)
+        self.assertIn("g0_activation_guard_until_ms", main)
+        self.assertIn(
+            "keyboard_physical_press && activation_transaction_active",
+            main,
+        )
 
         g0_start = main.index("if (M5.BtnA.wasPressed())")
         g0_end = main.index("if (M5.BtnA.wasReleased())", g0_start)

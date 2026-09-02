@@ -55,6 +55,10 @@ constexpr std::uint8_t kRecordingLedGreen = 60;
 constexpr std::uint8_t kRecordingLedBlue = 16;
 constexpr char kRecordingLedDriveRgb[] = "#FF3C10";
 constexpr std::uint64_t kShortcutFeedbackDurationMs = 850;
+// G0 both opens capture and emits its configured Mac shortcut. Treat the
+// release plus any switch bounce or queued matrix edge as one activation
+// transaction, so only a later physical press can close capture again.
+constexpr std::uint64_t kG0ActivationGuardMs = 120;
 constexpr std::uint64_t kDisplayDimAfterMs = 15'000;
 constexpr std::uint64_t kDisplayOffAfterMs = 30'000;
 constexpr std::uint64_t kBatterySampleIntervalMs = 10'000;
@@ -609,13 +613,16 @@ void apply_input_result(
 
 bool stop_microphone_for_physical_press(
     bool physical_press_observed,
+    bool activation_transaction_active,
     cardbridge::BridgeDomain& domain,
     char* feedback,
     std::size_t feedback_size,
     std::uint64_t& feedback_until_ms
 ) {
-    if (!physical_press_observed ||
-        domain.state().capture_gate != cardbridge::CaptureGate::kOpen) {
+    if (!cardbridge::should_stop_microphone_for_physical_press(
+            physical_press_observed,
+            domain.state().capture_gate == cardbridge::CaptureGate::kOpen,
+            activation_transaction_active)) {
         return false;
     }
     domain.dispatch(
@@ -992,6 +999,8 @@ extern "C" void app_main() {
     std::uint64_t next_wave_draw_ms = 0;
     std::uint8_t wave_phase = 0;
     bool pairing_g0_press = false;
+    bool activation_g0_press_ignored = false;
+    std::uint64_t g0_activation_guard_until_ms = 0;
     bool last_authenticated = false;
     cardbridge::ControlLease control_lease;
     std::array<char, 64> serial_line{};
@@ -1276,8 +1285,15 @@ extern "C" void app_main() {
 
         if (M5.BtnA.wasPressed()) {
             should_wake_display = true;
-            if (stop_microphone_for_physical_press(
+            const bool activation_transaction_active =
+                now < g0_activation_guard_until_ms &&
+                domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
+            if (activation_transaction_active) {
+                activation_g0_press_ignored = true;
+                pairing_g0_press = false;
+            } else if (stop_microphone_for_physical_press(
                     true,
+                    false,
                     domain,
                     feedback,
                     sizeof(feedback),
@@ -1298,12 +1314,16 @@ extern "C" void app_main() {
         }
         if (M5.BtnA.wasReleased()) {
             should_wake_display = true;
-            if (pairing_g0_press) {
+            if (activation_g0_press_ignored) {
+                activation_g0_press_ignored = false;
+            } else if (pairing_g0_press) {
                 if (pairing.visible && pairing.needs_confirmation) {
                     (void)ble_bridge_confirm_pairing(true);
                 }
                 pairing_g0_press = false;
             } else {
+                const bool capture_was_open =
+                    domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
                 apply_input_result(
                     input_router.dispatch(cardbridge::InputAction{
                         cardbridge::InputActionKind::kG0Up, 0, 0, now}),
@@ -1312,6 +1332,10 @@ extern "C" void app_main() {
                     sizeof(feedback),
                     feedback_until_ms
                 );
+                if (!capture_was_open &&
+                    domain.state().capture_gate == cardbridge::CaptureGate::kOpen) {
+                    g0_activation_guard_until_ms = now + kG0ActivationGuardMs;
+                }
             }
         }
 
@@ -1321,13 +1345,19 @@ extern "C" void app_main() {
         if (key_event_count > 0 || keyboard_physical_press) {
             should_wake_display = true;
         }
-        const bool keyboard_press_consumed = stop_microphone_for_physical_press(
-            keyboard_physical_press,
-            domain,
-            feedback,
-            sizeof(feedback),
-            feedback_until_ms
-        );
+        const bool activation_transaction_active =
+            now < g0_activation_guard_until_ms &&
+            domain.state().capture_gate == cardbridge::CaptureGate::kOpen;
+        const bool keyboard_press_consumed =
+            (keyboard_physical_press && activation_transaction_active) ||
+            stop_microphone_for_physical_press(
+                keyboard_physical_press,
+                false,
+                domain,
+                feedback,
+                sizeof(feedback),
+                feedback_until_ms
+            );
         for (std::size_t index = 0; index < key_event_count; ++index) {
             const auto& event = key_events[index];
             if (!cardbridge::should_forward_after_microphone_stop(

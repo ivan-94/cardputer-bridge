@@ -13,6 +13,7 @@ using cardbridge::InputEffectKind;
 using cardbridge::InputRouter;
 using cardbridge::ShortcutMapping;
 using cardbridge::should_forward_after_microphone_stop;
+using cardbridge::should_stop_microphone_for_physical_press;
 
 constexpr std::uint8_t kUsageQ = 0x14;
 constexpr std::uint8_t kUsageX = 0x1b;
@@ -84,6 +85,15 @@ void test_microphone_stop_consumes_down_but_never_release() {
             "a release must still reach the router to prevent a stuck Mac key");
     require(should_forward_after_microphone_stop(false, true),
             "normal key-down must remain unchanged outside recording");
+}
+
+void test_g0_activation_transaction_cannot_immediately_stop_microphone() {
+    require(!should_stop_microphone_for_physical_press(true, true, true),
+            "the G0 activation transaction must not stop the microphone it opened");
+    require(should_stop_microphone_for_physical_press(true, true, false),
+            "a fresh physical press after activation must stop the microphone");
+    require(!should_stop_microphone_for_physical_press(true, false, false),
+            "a physical press cannot stop an already closed capture gate");
 }
 
 void test_g0_alone_toggles_mic_and_sends_its_bound_shortcut() {
@@ -275,6 +285,7 @@ void test_mapping_replacement_is_atomic() {
 int main() {
     test_plain_key_has_balanced_reports();
     test_microphone_stop_consumes_down_but_never_release();
+    test_g0_activation_transaction_cannot_immediately_stop_microphone();
     test_plain_and_modified_keys_can_be_shortcut_triggers();
     test_g0_alone_toggles_mic_and_sends_its_bound_shortcut();
     test_modifier_only_output_is_valid_and_balanced();
