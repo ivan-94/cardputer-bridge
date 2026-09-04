@@ -9,6 +9,9 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 # are no longer needed so HTTPS OTA can coexist with BLE, Wi-Fi and audio.
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
+# Keep the existing TLS configuration for OTA. Audio itself uses plaintext PCM
+# and does not call MbedTLS or allocate cipher contexts.
+CONFIG_MBEDTLS_HARDWARE_AES=n
 CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_COMPILER_CXX_EXCEPTIONS=n
 CONFIG_COMPILER_CXX_RTTI=n
@@ -21,13 +24,10 @@ CONFIG_BT_CLASSIC_ENABLED=n
 CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
-# M5Unified's display/SPI auto-detection uses roughly 3.7 KiB before app_main
-# reaches the bridge loop. Keep headroom for the bridge's local routing state.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-# Audio frames are 10 ms. A 100 Hz RTOS tick leaves no scheduling margin. A
-# 1 ms tick keeps capture and transport responsive at the 100-frame/s cadence.
+# M5Unified initialization and the bridge's long-lived routing state exhausted
+# an 8 KiB main task stack on physical Cardputer ADV hardware. Keep 4 KiB of
+# explicit headroom for BLE/Wi-Fi startup callbacks and serial reconnects.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+# Audio frames are 20 ms. A 1 ms tick keeps capture and transport responsive
+# while leaving enough scheduling resolution for the double-buffered mic path.
 CONFIG_FREERTOS_HZ=1000
-# Keep the TCP kernel queue near 80 ms. The application already owns a bounded
-# 200 ms capture ring, so the default 160 ms socket queue only adds hidden
-# latency without adding observability.
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880

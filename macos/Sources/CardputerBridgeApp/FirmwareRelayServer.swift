@@ -27,6 +27,26 @@ final class FirmwareRelayServer: @unchecked Sendable {
               SHA256.hash(data: data).relayHex == release.firmware.ota.sha256 else {
             throw FirmwareRelayError.invalidArtifact
         }
+        return try await prepare(data: data)
+    }
+
+    #if DEBUG
+    func prepareLocal(imageURL: URL) async throws -> URL {
+        let values = try imageURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .fileSizeKey,
+        ])
+        guard values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize > 0,
+              fileSize <= 4 * 1_024 * 1_024 else {
+            throw FirmwareRelayError.invalidArtifact
+        }
+        return try await prepare(data: Data(contentsOf: imageURL))
+    }
+    #endif
+
+    private func prepare(data: Data) async throws -> URL {
         guard let address = LocalIPv4.preferredAddress() else {
             throw FirmwareRelayError.localNetworkUnavailable
         }

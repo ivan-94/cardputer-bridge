@@ -1,4 +1,3 @@
-import CryptoKit
 import XCTest
 @testable import CardputerBridgeCore
 
@@ -7,8 +6,7 @@ final class AudioControlMessageTests: XCTestCase {
         let offer = AudioOfferMessage(
             ipv4: "192.168.255.254",
             port: 65_535,
-            sessionID: 0x0102030405060708,
-            key: SymmetricKey(data: Data(0..<32))
+            sessionID: 0x0102030405060708
         )
 
         let data = try offer.encoded()
@@ -18,24 +16,10 @@ final class AudioControlMessageTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(data.count, 160)
         XCTAssertEqual("audio_offer", json["type"] as? String)
-        XCTAssertEqual("tcp", json["transport"] as? String)
+        XCTAssertEqual("udp", json["transport"] as? String)
         XCTAssertEqual("0102030405060708", json["sid"] as? String)
-        XCTAssertEqual(44, (json["key"] as? String)?.count)
-    }
-
-    func testAudioOfferDoesNotEscapeBase64Slashes() throws {
-        let offer = AudioOfferMessage(
-            ipv4: "192.168.2.109",
-            port: 54_321,
-            sessionID: 0x0102030405060708,
-            key: SymmetricKey(data: Data(repeating: 0xff, count: 32))
-        )
-
-        let wire = try offer.encoded()
-        let text = String(decoding: wire, as: UTF8.self)
-
-        XCTAssertTrue(text.contains("////"))
-        XCTAssertFalse(text.contains("\\/"))
+        XCTAssertNil(json["key"])
+        XCTAssertEqual("pcm16le-v2", json["format"] as? String)
     }
 
     func testMaximumWifiCredentialsAreSplitIntoBoundedEncryptedWrites() throws {

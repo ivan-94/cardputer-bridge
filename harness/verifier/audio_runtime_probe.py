@@ -10,8 +10,10 @@ from typing import Any
 
 def verify_readiness(probe: dict[str, Any]) -> dict[str, object]:
     errors: list[str] = []
-    if probe.get("transport") != "tcp":
-        errors.append("reliable_transport_missing")
+    if probe.get("transport") != "udp":
+        errors.append("udp_transport_missing")
+    if probe.get("audio_format") != "pcm16le-v2" or probe.get("audio_encrypted") is not False:
+        errors.append("plaintext_v2_format_missing")
     if probe.get("status") not in {"listening", "receiving"}:
         errors.append("receiver_not_ready")
     if probe.get("system_microphone_ready") is not True:
@@ -34,7 +36,7 @@ def verify(probe: dict[str, Any]) -> dict[str, object]:
     if probe.get("status") != "receiving":
         errors.append("receiver_not_receiving")
     if not isinstance(accepted, int) or accepted < 3:
-        errors.append("authenticated_packets_missing")
+        errors.append("accepted_packets_missing")
     if probe.get("fault"):
         errors.append("receiver_fault_present")
     duplicates = probe.get("duplicate_or_late_packets")
@@ -45,8 +47,10 @@ def verify(probe: dict[str, Any]) -> dict[str, object]:
         errors.append("packet_metrics_missing")
     if not isinstance(duplicates, int) or duplicates != 0:
         errors.append("stream_duplicate_or_late")
-    if probe.get("transport") != "tcp":
-        errors.append("reliable_transport_missing")
+    if probe.get("transport") != "udp":
+        errors.append("udp_transport_missing")
+    if probe.get("audio_format") != "pcm16le-v2" or probe.get("audio_encrypted") is not False:
+        errors.append("plaintext_v2_format_missing")
     port = probe.get("listener_port")
     if not isinstance(port, int) or not 0 < port <= 65535:
         errors.append("listener_endpoint_missing")

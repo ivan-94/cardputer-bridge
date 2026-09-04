@@ -3,24 +3,41 @@ import Foundation
 public struct AudioStreamMetrics: Equatable, Sendable {
     public var acceptedPackets = 0
     public var missingPackets = 0
+    public var recoveredPackets = 0
+    public var missingCaptureSamples = 0
     public var duplicateOrLatePackets = 0
     public var lastSequence: UInt32?
     public var signalLevel = 0.0
 
     public init() {}
+
+    /// Retains session-wide transport evidence when a bounded jitter buffer is
+    /// retired between recording intervals.
+    public mutating func accumulate(_ other: AudioStreamMetrics) {
+        acceptedPackets += other.acceptedPackets
+        missingPackets += other.missingPackets
+        recoveredPackets += other.recoveredPackets
+        missingCaptureSamples += other.missingCaptureSamples
+        duplicateOrLatePackets += other.duplicateOrLatePackets
+        if let otherLastSequence = other.lastSequence {
+            lastSequence = otherLastSequence
+        }
+        signalLevel = max(signalLevel, other.signalLevel)
+    }
 }
 
 public struct AudioFrameAccumulator: Sendable {
     public let sessionID: UInt64
     public private(set) var metrics = AudioStreamMetrics()
     private var expectedSequence: UInt32?
+    private var expectedCaptureSampleIndex: UInt32?
 
     public init(sessionID: UInt64) {
         self.sessionID = sessionID
     }
 
     @discardableResult
-    public mutating func accept(_ frame: AudioFrameV1) -> Bool {
+    public mutating func accept(_ frame: AudioFrameV2) -> Bool {
         guard frame.sessionID == sessionID else { return false }
         if let expectedSequence {
             guard frame.sequence >= expectedSequence else {
@@ -29,10 +46,18 @@ public struct AudioFrameAccumulator: Sendable {
             }
             metrics.missingPackets += Int(frame.sequence - expectedSequence)
         }
+        if let expectedCaptureSampleIndex,
+           frame.captureSampleIndex > expectedCaptureSampleIndex {
+            metrics.missingCaptureSamples += Int(
+                frame.captureSampleIndex - expectedCaptureSampleIndex
+            )
+        }
         metrics.acceptedPackets += 1
         metrics.lastSequence = frame.sequence
         metrics.signalLevel = signalLevel(frame.pcm16)
         expectedSequence = frame.sequence &+ 1
+        expectedCaptureSampleIndex = frame.captureSampleIndex &+
+            UInt32(AudioStreamFrameV2.frameSamples)
         return true
     }
 

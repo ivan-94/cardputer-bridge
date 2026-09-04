@@ -32,7 +32,8 @@ def main() -> int:
             and "M5.In_I2C.writeRegister8" not in source
         ),
         "wifi power follows realtime audio state": (
-            "esp_wifi_set_ps(enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM)" in source
+            "set_runtime_wifi_power_save(" in source
+            and "enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM" in source
             and "s_capture_enabled.exchange" in source
         ),
         "capture is isolated from reliable transport": (
@@ -42,16 +43,18 @@ def main() -> int:
             and "psa_aead_encrypt" not in capture_source
             and '"audio_capture"' in source
             and '"audio_stream"' in source
+            and "kMicrophoneTaskPriority = 10" in source
             and "kCaptureTaskPriority = 8" in source
-            and "kTransportTaskPriority = 4" in source
+            and "kTransportTaskPriority = 9" in source
+            and "microphone_config.task_pinned_core = kCaptureTaskCore" in source
         ),
-        "transport is ordered bounded TCP": (
-            "SOCK_STREAM" in source
-            and "IPPROTO_TCP" in source
-            and "TCP_NODELAY" in source
-            and "SO_SNDTIMEO" in source
-            and source.count("if (setsockopt(") >= 2
-            and "kCaptureRingFrames = 20" in source
+        "transport is bounded nonblocking redundant UDP": (
+            "SOCK_DGRAM" in source
+            and "IPPROTO_UDP" in source
+            and "O_NONBLOCK" in source
+            and "kAudioRedundantDatagramBytes" in source
+            and "kCaptureRingFrames = 10" in source
+            and "SOCK_STREAM" not in source
         ),
         "real signal level is measured": "s_signal_level.store" in source,
         "inactive audio task blocks until work arrives": (
@@ -82,7 +85,7 @@ def main() -> int:
     if failures:
         print("FAIL device audio policy: " + ", ".join(failures), file=sys.stderr)
         return 1
-    print("PASS device_audio_clock_locked_split_capture_tcp_stream_and_metered")
+    print("PASS device_audio_clock_locked_split_capture_udp_stream_and_metered")
     return 0
 
 

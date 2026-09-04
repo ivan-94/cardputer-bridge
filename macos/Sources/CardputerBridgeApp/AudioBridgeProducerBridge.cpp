@@ -111,6 +111,12 @@ extern "C" bool CardputerAudioProducerWriteFloat32(
         static_cast<UInt32>(frameCount));
 }
 
+extern "C" bool CardputerAudioProducerRefreshLease(
+    CardputerAudioProducerRef producer) {
+    return producer != nullptr
+        && static_cast<Producer*>(producer)->RefreshLease();
+}
+
 extern "C" void CardputerAudioProducerStop(CardputerAudioProducerRef producer) {
     if (producer != nullptr) {
         static_cast<Producer*>(producer)->Stop();

@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public enum CompactControlMessageError: Error, Equatable {
@@ -10,29 +9,26 @@ public struct AudioOfferMessage: Sendable {
     public let ipv4: String
     public let port: UInt16
     public let sessionID: UInt64
-    public let keyData: Data
 
     public init(
         ipv4: String,
         port: UInt16,
-        sessionID: UInt64,
-        key: SymmetricKey
+        sessionID: UInt64
     ) {
         self.ipv4 = ipv4
         self.port = port
         self.sessionID = sessionID
-        self.keyData = key.withUnsafeBytes { Data($0) }
     }
 
     public func encoded() throws -> Data {
         try boundedJSON(AudioOfferWire(
             v: 1,
             type: "audio_offer",
-            transport: "tcp",
+            transport: "udp",
+            format: "pcm16le-v2",
             ip: ipv4,
             port: port,
-            sid: String(format: "%016llx", sessionID),
-            key: keyData.base64EncodedString()
+            sid: String(format: "%016llx", sessionID)
         ))
     }
 }
@@ -92,7 +88,7 @@ private let compactControlMessageMaximumBytes = 160
 private func boundedJSON<T: Encodable>(_ value: T) throws -> Data {
     let encoder = JSONEncoder()
     // The firmware deliberately accepts only unescaped compact control
-    // strings. Base64 session keys can contain '/', which JSONEncoder escapes
+    // strings. Base64 Wi-Fi credentials can contain '/', which JSONEncoder escapes
     // unless this wire-format option is explicit.
     encoder.outputFormatting = [.withoutEscapingSlashes]
     let data = try encoder.encode(value)
@@ -106,10 +102,10 @@ private struct AudioOfferWire: Encodable {
     let v: Int
     let type: String
     let transport: String
+    let format: String
     let ip: String
     let port: UInt16
     let sid: String
-    let key: String
 }
 
 private struct StagedValueWire: Encodable {

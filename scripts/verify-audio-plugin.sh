@@ -51,6 +51,9 @@ nm -gU "$executable" | grep -q '_CardputerBridgeAudioFactory'
 codesign --verify --deep --strict --verbose=2 "$bundle"
 "$probe" "$executable"
 "$audio_shared_memory_test"
+for login_scenario in login-after-windowserver login-after-no-user logout user-switch; do
+  "$build_root/audio-plugin/audio_broker_login_test" "$login_scenario"
+done
 env CARDPUTER_BRIDGE_AUDIO_TEST_MODE=1 CARDPUTER_BRIDGE_AUDIO_SHM_NAME="$ipc_test_name" \
   "$driver_contract_probe" "$executable" publication
 env CARDPUTER_BRIDGE_AUDIO_TEST_MODE=1 CARDPUTER_BRIDGE_AUDIO_SHM_NAME="$ipc_test_name" \

@@ -7,6 +7,7 @@ build_root="${CARDPUTER_BRIDGE_BUILD_ROOT:-$HOME/.local/share/cardputer-bridge/b
 build_dir="${CARDPUTER_PRODUCTION_BUILD_DIR:-$build_root/firmware-production}"
 idf_entry="${IDF_CARDPUTER_BIN:-$HOME/.local/bin/idf-cardputer-5.4.2}"
 signing_key="${CARDPUTER_FIRMWARE_SIGNING_KEY:-}"
+version_override="${CARDPUTER_FIRMWARE_VERSION_OVERRIDE:-}"
 
 if [[ -z "$signing_key" || ! -s "$signing_key" ]]; then
   printf 'FAIL missing CARDPUTER_FIRMWARE_SIGNING_KEY\n' >&2
@@ -22,16 +23,28 @@ install -m 600 "$signing_key" \
   "$firmware_dir/keys/firmware-signing-rsa3072.pem"
 trap 'rm -f "$firmware_dir/keys/firmware-signing-rsa3072.pem"' EXIT
 
+cmake_args=(-D "SDKCONFIG=$firmware_dir/sdkconfig.production")
+if [[ -n "$version_override" ]]; then
+  if [[ ! "$version_override" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+    printf 'FAIL invalid CARDPUTER_FIRMWARE_VERSION_OVERRIDE=%s\n' \
+      "$version_override" >&2
+    exit 2
+  fi
+  cmake_args+=(
+    -D "CARDPUTER_BRIDGE_VERSION_OVERRIDE=$version_override"
+  )
+fi
+
 # sdkconfig.production is generated from the two tracked defaults. Reusing an
 # older generated file would silently preserve obsolete TLS settings.
 rm -f "$firmware_dir/sdkconfig.production"
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults" \
   "$idf_entry" -C "$firmware_dir" -B "$build_dir" \
-  -D SDKCONFIG="$firmware_dir/sdkconfig.production" \
+  "${cmake_args[@]}" \
   fullclean
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.production.defaults" \
   "$idf_entry" -C "$firmware_dir" -B "$build_dir" \
-  -D SDKCONFIG="$firmware_dir/sdkconfig.production" \
+  "${cmake_args[@]}" \
   build
 
 grep -q '^CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y$' \

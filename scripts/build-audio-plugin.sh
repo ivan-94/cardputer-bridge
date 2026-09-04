@@ -13,6 +13,7 @@ audio_pcm_consumer="$build_root/audio-plugin/audio_pcm_consumer"
 audio_test_producer="$build_root/audio-plugin/audio_test_producer"
 audio_broker_test_server="$build_root/audio-plugin/audio_broker_test_server"
 audio_shared_memory_test="$build_root/audio-plugin/audio_shared_memory_test"
+audio_broker_login_test="$build_root/audio-plugin/audio_broker_login_test"
 if [[ -n "${DEVELOPER_DIR:-}" ]]; then
   developer_dir="$DEVELOPER_DIR"
 elif [[ -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
@@ -100,6 +101,14 @@ cp "$project_dir/audio-plugin/Info.plist" "$staging_bundle/Contents/Info.plist"
   "$project_dir/audio-plugin/AudioBridgeFDBroker.cpp" \
   -framework CoreAudio -framework CoreFoundation \
   -o "$audio_shared_memory_test"
+
+"$compiler" \
+  -std=c++17 -Wall -Wextra -Werror \
+  -isysroot "$sdk" -mmacosx-version-min=15.0 \
+  "$project_dir/audio-plugin/audio_broker_login_test.cpp" \
+  "$project_dir/audio-plugin/AudioBridgeFDBroker.cpp" \
+  -framework CoreAudio -framework CoreFoundation \
+  -o "$audio_broker_login_test"
 
 codesign --force --sign - "$staging_bundle"
 codesign --verify --deep --strict --verbose=2 "$staging_bundle"

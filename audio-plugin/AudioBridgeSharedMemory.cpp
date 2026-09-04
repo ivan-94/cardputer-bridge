@@ -157,10 +157,25 @@ bool Consumer::AttachDescriptor(int descriptor) {
         Detach();
         return false;
     }
-    // StartIO represents a new real-time listener, not a request to replay
-    // everything produced while no client was attached. Join at the live edge
-    // so the 1.36-second safety capacity cannot become user-visible latency.
-    StoreRelease(&buffer_->read_index, LoadAcquire(&buffer_->write_index));
+    // A live producer primes a bounded reservoir before Core Audio starts its
+    // first render callback. Keep up to the operating target as pre-roll so a
+    // newly attached recorder does not immediately underflow on an ordinary
+    // Wi-Fi scheduling pause. Never move behind data already consumed, and do
+    // not replay buffered data from an inactive or expired producer.
+    const std::uint64_t write = LoadAcquire(&buffer_->write_index);
+    std::uint64_t join = write;
+    const std::uint64_t leaseDeadline = LoadAcquire(
+        &buffer_->lease_deadline_host_time);
+    if (LoadAcquire(&buffer_->producer_active) != 0
+        && leaseDeadline != 0
+        && mach_absolute_time() <= leaseDeadline) {
+        const std::uint64_t existingRead = LoadAcquire(&buffer_->read_index);
+        const std::uint64_t recentStart = write > kRealtimeCatchupFrames
+            ? write - kRealtimeCatchupFrames
+            : 0;
+        join = std::min(write, std::max(existingRead, recentStart));
+    }
+    StoreRelease(&buffer_->read_index, join);
     return true;
 }
 

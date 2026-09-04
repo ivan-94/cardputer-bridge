@@ -22,6 +22,7 @@ bool CardputerAudioProducerWriteFloat32(
     CardputerAudioProducerRef producer,
     const float* samples,
     size_t frameCount);
+bool CardputerAudioProducerRefreshLease(CardputerAudioProducerRef producer);
 void CardputerAudioProducerStop(CardputerAudioProducerRef producer);
 
 #ifdef __cplusplus

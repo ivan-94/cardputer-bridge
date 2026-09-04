@@ -22,7 +22,7 @@ def main() -> int:
         and "__atomic_store_n" in source,
         "atomic cross-process sample loads": "LoadSample" in source
         and "__atomic_load_n" in source,
-        "versioned atomic sample layout": "kSharedMemoryVersion = 3" in header
+        "installed-compatible atomic sample layout": "kSharedMemoryVersion = 3" in header
         and "sample_bits" in header,
     }
     failures = [name for name, passed in required.items() if not passed]

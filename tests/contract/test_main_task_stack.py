@@ -15,8 +15,8 @@ class MainTaskStackContractTests(unittest.TestCase):
         self.assertIsNotNone(match, "main task stack size must be explicit")
         self.assertGreaterEqual(
             int(match.group(1)),
-            8192,
-            "M5.begin plus bridge locals exceeded the ESP-IDF 3584-byte default on hardware",
+            12288,
+            "M5.begin plus bridge locals exhausted an 8192-byte main task stack on hardware",
         )
 
     def test_live_audio_meter_is_responsive_without_unbounded_redraw(self) -> None:
@@ -25,6 +25,10 @@ class MainTaskStackContractTests(unittest.TestCase):
         self.assertIn("(decibels + 60.0f) / 42.0f", source)
         self.assertIn("? 0.68f : 0.30f", source)
         self.assertIn("60.0f + displayed_level * 940.0f", source)
+        self.assertIn(
+            "domain.state().capture_gate != cardbridge::CaptureGate::kOpen",
+            source,
+        )
         self.assertIn("now + kLiveWaveformIntervalMs", source)
 
 

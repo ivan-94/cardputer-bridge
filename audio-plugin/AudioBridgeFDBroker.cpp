@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <pwd.h>
+#include <poll.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -229,13 +230,22 @@ FDBrokerServer::~FDBrokerServer() {
 }
 
 bool FDBrokerServer::Start(const std::string& socketPath, uid_t allowedProducerUID) {
-    Stop();
-    if (!SafeSocketPath(socketPath)
-        || allowedProducerUID == static_cast<uid_t>(-1)
-        || allowedProducerUID == 0) {
+    if (allowedProducerUID == 0 || allowedProducerUID == static_cast<uid_t>(-1)) {
+        Stop();
         return false;
     }
-    allowed_producer_uid_ = allowedProducerUID;
+    return Start(socketPath, [allowedProducerUID] { return std::optional<uid_t>(allowedProducerUID); });
+}
+
+bool FDBrokerServer::Start(const std::string& socketPath, ProducerUIDResolver resolveProducerUID) {
+    Stop();
+    if (!SafeSocketPath(socketPath) || !resolveProducerUID) {
+        return false;
+    }
+    // The HAL can start before login, while /dev/console belongs to WindowServer.
+    // Keep the resolver, not that startup identity. No login is needed to publish
+    // the device; authorization happens when a producer actually connects.
+    resolve_producer_uid_ = std::move(resolveProducerUID);
     ownership_lock_descriptor_ = AcquireOwnershipLock(socketPath);
     if (ownership_lock_descriptor_ < 0) {
         Stop();
@@ -329,6 +339,7 @@ void FDBrokerServer::Stop() noexcept {
     if (worker_.joinable()) {
         worker_.join();
     }
+    resolve_producer_uid_ = {};
     Deactivate(buffer_);
     if (buffer_ != nullptr) {
         munmap(buffer_, kMappingSize);
@@ -359,6 +370,12 @@ std::uint64_t FDBrokerServer::rejected_peers() const noexcept {
     return rejected_peers_.load(std::memory_order_acquire);
 }
 
+bool FDBrokerServer::IsAuthorized(uid_t peerUID) const noexcept {
+    const auto allowed = resolve_producer_uid_();
+    return allowed.has_value() && *allowed != 0
+        && *allowed != static_cast<uid_t>(-1) && peerUID == *allowed;
+}
+
 void FDBrokerServer::Serve() noexcept {
     while (running_.load(std::memory_order_acquire)) {
         const int listener = listener_descriptor_.load(std::memory_order_acquire);
@@ -377,7 +394,7 @@ void FDBrokerServer::Serve() noexcept {
         uid_t peerUID = static_cast<uid_t>(-1);
         gid_t peerGID = static_cast<gid_t>(-1);
         if (getpeereid(client, &peerUID, &peerGID) != 0
-            || peerUID != allowed_producer_uid_) {
+            || !IsAuthorized(peerUID)) {
             rejected_peers_.fetch_add(1, std::memory_order_acq_rel);
             close(client);
             continue;
@@ -392,8 +409,17 @@ void FDBrokerServer::Serve() noexcept {
             continue;
         }
         char byte = 0;
-        while (running_.load(std::memory_order_acquire)
-               && recv(client, &byte, sizeof(byte), 0) > 0) {
+        while (running_.load(std::memory_order_acquire) && IsAuthorized(peerUID)) {
+            // A silent producer otherwise holds recv forever across logout or
+            // fast user switching. Revoke its lease and release the broker for
+            // the new user within one poll interval.
+            pollfd event{client, POLLIN, 0};
+            const int ready = poll(&event, 1, 250);
+            if (ready < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (ready > 0 && recv(client, &byte, sizeof(byte), 0) <= 0) break;
         }
         Deactivate(buffer_);
         if (client_descriptor_.exchange(-1, std::memory_order_acq_rel) == client) {
@@ -407,6 +433,16 @@ std::optional<uid_t> ConsoleUserUID() noexcept {
     if (stat("/dev/console", &metadata) != 0
         || metadata.st_uid == 0
         || metadata.st_uid == static_cast<uid_t>(-1)) {
+        return std::nullopt;
+    }
+    // At boot the owner can be _windowserver (88), not a logged-in person.
+    // Resolve the account instead of assuming every non-root UID is a user.
+    passwd account{};
+    passwd* result = nullptr;
+    char storage[16384]{};
+    if (getpwuid_r(metadata.st_uid, &account, storage, sizeof(storage), &result) != 0
+        || result == nullptr || account.pw_name == nullptr
+        || account.pw_name[0] == '_' || std::strcmp(account.pw_name, "loginwindow") == 0) {
         return std::nullopt;
     }
     return metadata.st_uid;

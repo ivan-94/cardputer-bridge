@@ -22,7 +22,7 @@ INPUT_SOURCE = (
 
 
 class MicrophoneKeyExitContractTests(unittest.TestCase):
-    def test_every_physical_key_can_mute_and_is_consumed(self) -> None:
+    def test_every_physical_key_can_mute_and_still_be_forwarded(self) -> None:
         main = MAIN_SOURCE.read_text(encoding="utf-8")
         header = INPUT_HEADER.read_text(encoding="utf-8")
         input_source = INPUT_SOURCE.read_text(encoding="utf-8")
@@ -40,16 +40,17 @@ class MicrophoneKeyExitContractTests(unittest.TestCase):
         )
         self.assertIn(
             "should_forward_after_microphone_stop(\n"
-            "                    keyboard_press_consumed,\n"
+            "                    keyboard_stopped_microphone,\n"
             "                    event.pressed",
             main,
         )
         self.assertIn('"ANY KEY  mute microphone"', main)
-        self.assertIn("kG0ActivationGuardMs", main)
+        self.assertIn("cardbridge::G0RecordingStopGuard", main)
+        self.assertIn("g0_recording_stop_guard.recording_started(now)", main)
+        self.assertIn("g0_recording_stop_guard.stop_armed()", main)
         self.assertIn("activation_g0_press_ignored", main)
-        self.assertIn("g0_activation_guard_until_ms", main)
         self.assertIn(
-            "keyboard_physical_press && activation_transaction_active",
+            "const bool activation_transaction_active =",
             main,
         )
 

@@ -436,20 +436,17 @@ bool is_wifi_commit(std::string_view message) {
 bool parse_audio_offer(std::string_view message, AudioOffer& offer) {
     if (!is_json_object(message) || !is_version_one(message) ||
         !string_value_equals(message, "type", "audio_offer") ||
-        !string_value_equals(message, "transport", "tcp")) {
+        !string_value_equals(message, "transport", "udp") ||
+        !string_value_equals(message, "format", "pcm16le-v2")) {
         return false;
     }
     const std::string_view ipv4 = string_value(message, "ip");
-    const std::string_view key = string_value(message, "key");
     const std::string_view session = string_value(message, "sid");
     std::uint64_t port = 0;
     AudioOffer parsed{};
-    std::size_t key_size = 0;
     if (ipv4.empty() || ipv4.size() >= parsed.ipv4.size() ||
         !unsigned_value(message, "port", 65535, port) || port == 0 ||
-        !parse_hex_u64(session, parsed.session_id) ||
-        !decode_base64(key, parsed.key.data(), parsed.key.size(), key_size) ||
-        key_size != parsed.key.size()) {
+        !parse_hex_u64(session, parsed.session_id) || parsed.session_id == 0) {
         return false;
     }
     std::copy(ipv4.begin(), ipv4.end(), parsed.ipv4.begin());

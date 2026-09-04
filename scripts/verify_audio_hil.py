@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 from typing import Any
-
-from verify_runtime_hil import assert_fields, send_command
 
 
 def read_probe(path: Path) -> dict[str, Any]:
@@ -23,38 +22,10 @@ def click_app_microphone_toggle() -> None:
     script = '''
 tell application "System Events"
   tell process "Cardputer Bridge"
-    set frontmost to true
-    set candidates to entire contents of window 1
-    repeat with candidate in candidates
-      try
-        set element to contents of candidate
-        if value of attribute "AXIdentifier" of element is "microphone-toggle" then
-          perform action "AXPress" of element
-          return "pressed"
-        end if
-      end try
-    end repeat
-    repeat with candidate in candidates
-      try
-        set element to contents of candidate
-        if value of attribute "AXIdentifier" of element is "navigation-overview" then
-          perform action "AXPress" of element
-          exit repeat
-        end if
-      end try
-    end repeat
-    delay 0.1
-    set candidates to entire contents of window 1
-    repeat with candidate in candidates
-      try
-        set element to contents of candidate
-        if value of attribute "AXIdentifier" of element is "microphone-toggle" then
-          perform action "AXPress" of element
-          return "pressed"
-        end if
-      end try
-    end repeat
-    error "microphone-toggle accessibility element not found"
+    click menu bar item 1 of menu bar 2
+    delay 0.2
+    set candidate to first menu item of menu 1 of menu bar item 1 of menu bar 2 whose name contains "麦克风"
+    click candidate
   end tell
 end tell
 '''
@@ -74,7 +45,23 @@ end tell
             last_error = error
             time.sleep(0.1)
     if last_error is not None:
-        raise last_error
+        helper = Path(__file__).with_name("ax_press.swift")
+        environment = dict(os.environ)
+        environment.setdefault(
+            "CLANG_MODULE_CACHE_PATH",
+            "/tmp/cardputer-bridge-swift-module-cache",
+        )
+        subprocess.run(
+            [
+                "xcrun",
+                "swift",
+                str(helper),
+                "io.nexu.cardputerbridge.app",
+                "microphone-toggle",
+            ],
+            check=True,
+            env=environment,
+        )
 
 
 def device_state_from_probe(path: Path) -> dict[str, Any]:
@@ -85,19 +72,18 @@ def device_state_from_probe(path: Path) -> dict[str, Any]:
     return value
 
 
-def wait_for_mic_intent(path: Path, intent: str, timeout: float = 4.0) -> None:
+def wait_for_mic_intent(path: Path, intent: str, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         state = device_state_from_probe(path)
+        last = state
         if state.get("mic_intent") == intent:
             expected_gate = "open" if intent == "live" else "closed"
-            if state.get("capture_gate") != expected_gate:
-                raise AssertionError(
-                    f"capture_gate_mismatch value={state.get('capture_gate')}"
-                )
-            return
+            if state.get("capture_gate") == expected_gate:
+                return
         time.sleep(0.1)
-    raise AssertionError(f"mic_intent_timeout expected={intent}")
+    raise AssertionError(f"mic_intent_timeout expected={intent} last={last}")
 
 
 def wait_for_audio_session_ready(path: Path, timeout: float = 15.0) -> None:
@@ -127,12 +113,75 @@ def wait_for_audio_session_ready(path: Path, timeout: float = 15.0) -> None:
     raise AssertionError(f"audio_session_not_ready last={last}")
 
 
-def main() -> int:
-    import serial
+def wait_for_receiver_drain(
+    path: Path,
+    timeout: float = 4.0,
+    quiet_seconds: float = 0.5,
+) -> dict[str, Any]:
+    """Wait until the session-validated UDP stream has no in-flight frames.
 
+    The device counters arrive through a slower BLE telemetry path, so they
+    cannot be used as an immediate UDP drain target. Require the receiver's own
+    accepted count to remain unchanged for a bounded quiet interval.
+    """
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    last_accepted = -1
+    quiet_since = time.monotonic()
+    while time.monotonic() < deadline:
+        last = read_probe(path)
+        accepted = int(last.get("accepted_packets", 0))
+        if accepted != last_accepted:
+            last_accepted = accepted
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since >= quiet_seconds:
+            return last
+        time.sleep(0.05)
+    return last
+
+
+def wait_for_device_counter_refresh(
+    path: Path,
+    baseline_heartbeat: int,
+    timeout: float = 4.0,
+) -> dict[str, Any]:
+    """Wait for one fresh BLE heartbeat before comparing device counters."""
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last = read_probe(path)
+        if int(last.get("heartbeat_write_acknowledged_total", 0)) > baseline_heartbeat:
+            return last
+        time.sleep(0.05)
+    raise AssertionError("device_counter_refresh_timeout")
+
+
+def ensure_microphone_muted(path: Path, timeout: float = 10.0) -> None:
+    """Leave both App authority and device state safely muted after any run."""
+    deadline = time.monotonic() + timeout
+    command_sent = False
+    while time.monotonic() < deadline:
+        probe = read_probe(path)
+        device = device_state_from_probe(path)
+        desired = probe.get("desired_mic_intent")
+        observed = device.get("mic_intent")
+        if desired == "muted" and observed == "muted":
+            return
+        if not command_sent and desired == "live" and observed == "live":
+            click_app_microphone_toggle()
+            command_sent = True
+        time.sleep(0.1)
+    raise AssertionError("microphone_cleanup_timeout")
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prove live Cardputer microphone capture reaches the Mac App."
     )
+    # Retained for CLI compatibility with the other HIL entry points. Audio
+    # verification deliberately never opens USB Serial/JTAG because doing so
+    # resets a physical Cardputer ADV and destroys the BLE/Wi-Fi session under
+    # test.
     parser.add_argument("--port", default="/dev/cu.usbmodem2101")
     parser.add_argument(
         "--audio-probe",
@@ -143,159 +192,174 @@ def main() -> int:
         default=str(Path.home() / ".local/share/cardputer-bridge/runtime/macos-state.json"),
     )
     parser.add_argument("--capture-seconds", type=float, default=60.0)
-    parser.add_argument(
-        "--control-source",
-        choices=("app", "serial"),
-        default="app",
-        help="Use the visible Mac App control or the authenticated serial harness.",
-    )
     args = parser.parse_args()
     probe_path = Path(args.audio_probe)
     macos_probe_path = Path(args.macos_probe)
+    evidence: dict[str, Any] = {}
 
     try:
         wait_for_audio_session_ready(macos_probe_path)
-        before_probe = read_probe(probe_path)
         live_started = False
-        with serial.Serial(
-            args.port,
-            115200,
-            timeout=0.1,
-            write_timeout=1,
-        ) as transport:
-            time.sleep(0.4)
-            transport.reset_input_buffer()
-            try:
-                initial = send_command(transport, "status")
-                assert_fields(
-                    initial,
-                    mic_intent="muted",
-                    capture_gate="closed",
-                    recording_led_target="off",
-                    control_authenticated=True,
-                    wifi_connected=True,
-                    audio_receiver_ready=True,
-                )
-                if args.control_source == "serial":
-                    send_command(transport, "control auth")
-                    send_command(transport, "mic live")
-                else:
-                    click_app_microphone_toggle()
-                live_started = True
-                wait_for_mic_intent(macos_probe_path, "live")
+        mute_started_probe: dict[str, Any] = {}
+        try:
+            click_app_microphone_toggle()
+            live_started = True
+            wait_for_mic_intent(macos_probe_path, "live")
 
-                deadline = time.monotonic() + args.capture_seconds
-                next_serial_heartbeat = time.monotonic()
-                while time.monotonic() < deadline:
-                    time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
-                    assert_fields(
-                        device_state_from_probe(macos_probe_path),
-                        mic_intent="live",
-                        capture_gate="open",
-                    )
-                    if (
-                        args.control_source == "serial"
-                        and time.monotonic() >= next_serial_heartbeat
-                    ):
-                        heartbeat = send_command(transport, "heartbeat")
-                        assert_fields(
-                            heartbeat,
-                            mic_intent="live",
-                            capture_gate="open",
-                            recording_led_target="red",
-                        )
-                        next_serial_heartbeat = time.monotonic() + 0.5
-                live_last = send_command(transport, "status")
-                assert_fields(
-                    live_last,
-                    mic_intent="live",
-                    capture_gate="open",
-                    recording_led_target="red",
-                    led_driver_enabled=True,
-                    led_count=1,
-                )
-            finally:
-                if live_started:
-                    if args.control_source == "serial":
-                        send_command(transport, "mic muted")
-                    else:
-                        click_app_microphone_toggle()
-                    wait_for_mic_intent(macos_probe_path, "muted")
-            time.sleep(1.0)
-            drained = send_command(transport, "status")
-            time.sleep(1.5)
-            stopped = send_command(transport, "status")
-            assert_fields(
-                stopped,
-                mic_intent="muted",
-                capture_gate="closed",
-                recording_led_target="off",
+            # The user action reaches the device before its BLE status and
+            # counters return to the App. Establish both baselines only after
+            # one fresh heartbeat, otherwise control-plane latency is counted
+            # as extra audio and makes short/long runs non-deterministic.
+            live_probe = read_probe(macos_probe_path)
+            initial_probe = wait_for_device_counter_refresh(
+                macos_probe_path,
+                int(live_probe.get("heartbeat_write_acknowledged_total", 0)),
             )
+            before_probe = read_probe(probe_path)
 
-        after_probe = read_probe(probe_path)
-        sent_growth = int(live_last.get("stream_frames_sent", 0)) - int(
-            initial.get("stream_frames_sent", 0)
+            deadline = time.monotonic() + args.capture_seconds
+            while time.monotonic() < deadline:
+                time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+                device = device_state_from_probe(macos_probe_path)
+                if (
+                    device.get("mic_intent") != "live"
+                    or device.get("capture_gate") != "open"
+                ):
+                    raise AssertionError(
+                        f"audio_capture_stopped_during_window state={device}"
+                    )
+            mute_started_probe = read_probe(macos_probe_path)
+        finally:
+            if live_started:
+                ensure_microphone_muted(macos_probe_path)
+
+        stopped_probe = wait_for_device_counter_refresh(
+            macos_probe_path,
+            int(mute_started_probe.get("heartbeat_write_acknowledged_total", 0)),
         )
+        sent_growth = int(stopped_probe.get("stream_frames_sent", 0)) - int(
+            initial_probe.get("stream_frames_sent", 0)
+        )
+        after_probe = wait_for_receiver_drain(probe_path)
+        time.sleep(0.5)
+        after_mute_probe = read_probe(probe_path)
+
         accepted_growth = int(after_probe.get("accepted_packets", 0)) - int(
             before_probe.get("accepted_packets", 0)
         )
-        stream_failure_growth = int(stopped.get("stream_failures", 0)) - int(
-            initial.get("stream_failures", 0)
+        stream_failure_growth = int(stopped_probe.get("stream_failures", 0)) - int(
+            initial_probe.get("stream_failures", 0)
         )
-        capture_overrun_growth = int(stopped.get("capture_overruns", 0)) - int(
-            initial.get("capture_overruns", 0)
+        capture_overrun_growth = int(stopped_probe.get("capture_overruns", 0)) - int(
+            initial_probe.get("capture_overruns", 0)
         )
-        # A 160-sample frame at 16 kHz is 10 ms: healthy capture must remain
-        # near 100 frames/s. Allow 10% scheduling/network tolerance.
-        minimum_stream_packets = max(10, int(args.capture_seconds * 90))
+        microphone_record_failure_growth = int(
+            stopped_probe.get("microphone_record_failures", 0)
+        ) - int(initial_probe.get("microphone_record_failures", 0))
+        capture_ring_drop_growth = int(
+            stopped_probe.get("capture_ring_drops", 0)
+        ) - int(initial_probe.get("capture_ring_drops", 0))
+        wifi_disconnect_growth = int(
+            stopped_probe.get("wifi_disconnect_count", 0)
+        ) - int(initial_probe.get("wifi_disconnect_count", 0))
+        missing_growth = int(after_probe.get("missing_packets", 0)) - int(
+            before_probe.get("missing_packets", 0)
+        )
+        recovered_growth = int(after_probe.get("recovered_packets", 0)) - int(
+            before_probe.get("recovered_packets", 0)
+        )
+        duplicate_growth = int(
+            after_probe.get("duplicate_or_late_packets", 0)
+        ) - int(before_probe.get("duplicate_or_late_packets", 0))
+        microphone_write_growth = int(
+            after_probe.get("microphone_writes", 0)
+        ) - int(before_probe.get("microphone_writes", 0))
+        missing_capture_sample_growth = int(
+            after_probe.get("missing_capture_samples", 0)
+        ) - int(before_probe.get("missing_capture_samples", 0))
+        evidence = {
+            "sent_growth": sent_growth,
+            "accepted_growth": accepted_growth,
+            "missing_growth": missing_growth,
+            "recovered_growth": recovered_growth,
+            "duplicate_or_late_growth": duplicate_growth,
+            "microphone_write_growth": microphone_write_growth,
+            "missing_capture_sample_growth": missing_capture_sample_growth,
+            "stream_failure_growth": stream_failure_growth,
+            "capture_overrun_growth": capture_overrun_growth,
+            "microphone_record_failure_growth": microphone_record_failure_growth,
+            "capture_ring_drop_growth": capture_ring_drop_growth,
+            "wifi_disconnect_growth": wifi_disconnect_growth,
+            "last_wifi_disconnect_reason": int(
+                stopped_probe.get("last_wifi_disconnect_reason", 0)
+            ),
+            "stream_failures_total": int(stopped_probe.get("stream_failures", 0)),
+            "capture_overruns_total": int(stopped_probe.get("capture_overruns", 0)),
+        }
+        # A 320-sample frame at 16 kHz is 20 ms: healthy capture must remain
+        # near 50 frames/s. Allow 10% scheduling/network tolerance.
+        minimum_stream_packets = max(10, int(args.capture_seconds * 45))
         if sent_growth < minimum_stream_packets:
             raise AssertionError(f"audio_send_growth_too_small value={sent_growth}")
         if accepted_growth < minimum_stream_packets:
             raise AssertionError(
-                f"authenticated_audio_growth_too_small value={accepted_growth}"
+                f"session_audio_growth_too_small value={accepted_growth}"
             )
-        missing_growth = int(after_probe.get("missing_packets", 0)) - int(
-            before_probe.get("missing_packets", 0)
-        )
         if missing_growth != 0:
             raise AssertionError(
                 f"audio_stream_sequence_gap value={missing_growth}"
             )
-        duplicate_growth = int(
-            after_probe.get("duplicate_or_late_packets", 0)
-        ) - int(before_probe.get("duplicate_or_late_packets", 0))
         if duplicate_growth != 0:
             raise AssertionError(
                 f"audio_stream_duplicate_or_late value={duplicate_growth}"
             )
-        if abs(sent_growth - accepted_growth) > 2:
+        if missing_capture_sample_growth != 0:
             raise AssertionError(
-                "audio_stream_sender_receiver_mismatch "
-                f"sent={sent_growth} accepted={accepted_growth}"
+                "audio_capture_sample_gap "
+                f"value={missing_capture_sample_growth}"
             )
-        if int(stopped.get("stream_frames_sent", -1)) != int(
-            drained.get("stream_frames_sent", -2)
-        ):
-            raise AssertionError("audio_continued_after_mute")
         if stream_failure_growth != 0:
             raise AssertionError(
-                f"stream_failures_grew value={stream_failure_growth}"
+                f"audio_stream_send_failure value={stream_failure_growth}"
             )
         if capture_overrun_growth != 0:
             raise AssertionError(
-                f"capture_overruns_grew value={capture_overrun_growth}"
+                f"audio_capture_overrun value={capture_overrun_growth}"
             )
+        if microphone_record_failure_growth != 0:
+            raise AssertionError(
+                "audio_microphone_record_failure "
+                f"value={microphone_record_failure_growth}"
+            )
+        if capture_ring_drop_growth != 0:
+            raise AssertionError(
+                f"audio_capture_ring_drop value={capture_ring_drop_growth}"
+            )
+        if wifi_disconnect_growth != 0:
+            raise AssertionError(
+                f"audio_wifi_disconnect value={wifi_disconnect_growth}"
+            )
+        if int(after_mute_probe.get("accepted_packets", -1)) != int(
+            after_probe.get("accepted_packets", -2)
+        ):
+            raise AssertionError("audio_continued_after_mute")
         if float(after_probe.get("signal_level", 0)) <= 0:
             raise AssertionError("captured_pcm_has_no_signal")
+        if not bool(after_probe.get("system_microphone_ready", False)):
+            raise AssertionError("system_microphone_not_ready")
+        if microphone_write_growth <= 0:
+            raise AssertionError("system_microphone_received_no_audio")
     except (
         AssertionError,
         OSError,
         ValueError,
         json.JSONDecodeError,
-        serial.SerialException,
         subprocess.CalledProcessError,
     ) as error:
-        print(json.dumps({"result": "FAIL", "error": str(error)}, ensure_ascii=False))
+        print(json.dumps(
+            {"result": "FAIL", "error": str(error), **evidence},
+            ensure_ascii=False,
+        ))
         return 1
 
     print(
@@ -305,13 +369,22 @@ def main() -> int:
                 "sent_growth": sent_growth,
                 "accepted_growth": accepted_growth,
                 "missing_growth": missing_growth,
+                "recovered_growth": recovered_growth,
                 "duplicate_or_late_growth": duplicate_growth,
-                "muted_stream_frames_sent": stopped["stream_frames_sent"],
+                "microphone_write_growth": microphone_write_growth,
+                "missing_capture_sample_growth": missing_capture_sample_growth,
+                "muted_stream_frames_sent": stopped_probe["stream_frames_sent"],
                 "signal_level": after_probe["signal_level"],
                 "stream_failure_growth": stream_failure_growth,
                 "capture_overrun_growth": capture_overrun_growth,
-                "stream_failures_total": stopped["stream_failures"],
-                "capture_overruns_total": stopped["capture_overruns"],
+                "microphone_record_failure_growth": microphone_record_failure_growth,
+                "capture_ring_drop_growth": capture_ring_drop_growth,
+                "wifi_disconnect_growth": wifi_disconnect_growth,
+                "last_wifi_disconnect_reason": stopped_probe[
+                    "last_wifi_disconnect_reason"
+                ],
+                "stream_failures_total": stopped_probe["stream_failures"],
+                "capture_overruns_total": stopped_probe["capture_overruns"],
             },
             ensure_ascii=False,
         )

@@ -39,14 +39,15 @@ class AudioTaskSchedulingContractTests(unittest.TestCase):
         for forbidden in ("send(", "connect(", "socket(", "psa_aead_encrypt"):
             self.assertNotIn(forbidden, capture)
 
-    def test_reliable_stream_is_bounded_and_lower_priority_than_capture(self) -> None:
+    def test_realtime_audio_pipeline_is_pinned_and_ordered_by_deadline(self) -> None:
         source = AUDIO_TASK.read_text(encoding="utf-8")
 
-        self.assertIn("kCaptureRingFrames = 20", source)
-        self.assertIn("SOCK_STREAM", source)
-        self.assertIn("TCP_NODELAY", source)
-        self.assertIn("SO_SNDTIMEO", source)
-        self.assertGreaterEqual(source.count("if (setsockopt("), 2)
+        self.assertIn("kCaptureRingFrames = 10", source)
+        self.assertIn("SOCK_DGRAM", source)
+        self.assertIn("IPPROTO_UDP", source)
+        self.assertIn("O_NONBLOCK", source)
+        self.assertNotIn("SOCK_STREAM", source)
+        self.assertNotIn("send_all", source)
         self.assertRegex(source, r"kCaptureTaskPriority = (\d+)")
         self.assertRegex(source, r"kTransportTaskPriority = (\d+)")
         capture_priority = int(
@@ -55,7 +56,14 @@ class AudioTaskSchedulingContractTests(unittest.TestCase):
         transport_priority = int(
             re.search(r"kTransportTaskPriority = (\d+)", source).group(1)
         )
-        self.assertGreater(capture_priority, transport_priority)
+        microphone_priority = int(
+            re.search(r"kMicrophoneTaskPriority = (\d+)", source).group(1)
+        )
+        self.assertGreater(microphone_priority, transport_priority)
+        self.assertGreater(transport_priority, capture_priority)
+        self.assertIn("microphone_config.task_pinned_core = kCaptureTaskCore", source)
+        self.assertIn("kCaptureTaskCore = 1", source)
+        self.assertIn("kTransportTaskCore = 1", source)
 
 
 if __name__ == "__main__":

@@ -102,11 +102,21 @@ final class ShortcutConfigurationTests: XCTestCase {
     }
 
     func testDeviceTelemetryRejectsInvalidBatteryAndDecodesRSSI() throws {
-        let valid = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53,"ext":true}"#.data(using: .utf8)!
+        let valid = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53,"ext":true,"sent":42,"fail":2,"overrun":3,"mf":2,"rd":1,"rh":4,"cg":23,"tg":137,"wd":4,"wr":200}"#.data(using: .utf8)!
         let snapshot = try XCTUnwrap(DeviceTelemetry.decode(from: valid))
         XCTAssertEqual(78, snapshot.batteryPercent)
         XCTAssertEqual(-53, snapshot.wifiRSSI)
         XCTAssertTrue(snapshot.externalPower)
+        XCTAssertEqual(42, snapshot.streamFramesSent)
+        XCTAssertEqual(2, snapshot.streamFailures)
+        XCTAssertEqual(3, snapshot.captureOverruns)
+        XCTAssertEqual(2, snapshot.microphoneRecordFailures)
+        XCTAssertEqual(1, snapshot.captureRingDrops)
+        XCTAssertEqual(4, snapshot.captureRingHighWater)
+        XCTAssertEqual(23, snapshot.maximumCaptureGapMilliseconds)
+        XCTAssertEqual(137, snapshot.maximumTransportGapMilliseconds)
+        XCTAssertEqual(4, snapshot.wifiDisconnectCount)
+        XCTAssertEqual(200, snapshot.lastWiFiDisconnectReason)
 
         let legacy = #"{"v":1,"event":"telemetry","bat":78,"rssi":-53}"#.data(using: .utf8)!
         XCTAssertFalse(try XCTUnwrap(DeviceTelemetry.decode(from: legacy)).externalPower)

@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <thread>
@@ -24,12 +25,16 @@ struct BrokerHello {
 
 class FDBrokerServer {
 public:
+    using ProducerUIDResolver = std::function<std::optional<uid_t>()>;
     FDBrokerServer() = default;
     FDBrokerServer(const FDBrokerServer&) = delete;
     FDBrokerServer& operator=(const FDBrokerServer&) = delete;
     ~FDBrokerServer();
 
     bool Start(const std::string& socketPath, uid_t allowedProducerUID);
+    // Resolver runs on the broker worker, never the realtime audio thread.
+    // It may return no user until login; it must not throw.
+    bool Start(const std::string& socketPath, ProducerUIDResolver resolveProducerUID);
     void Stop() noexcept;
     int DuplicateBufferDescriptor() const noexcept;
     SharedAudioBuffer* buffer() const noexcept { return buffer_; }
@@ -37,9 +42,10 @@ public:
 
 private:
     void Serve() noexcept;
+    bool IsAuthorized(uid_t peerUID) const noexcept;
 
     std::string socket_path_;
-    uid_t allowed_producer_uid_{static_cast<uid_t>(-1)};
+    ProducerUIDResolver resolve_producer_uid_;
     int ownership_lock_descriptor_{-1};
     int buffer_descriptor_{-1};
     SharedAudioBuffer* buffer_{nullptr};

@@ -2,16 +2,30 @@ import CardputerBridgeCore
 import XCTest
 
 final class AudioSessionRecoveryTests: XCTestCase {
+    func testCandidateAuthenticationAllowsAFullRadioStallRecoveryWindow() {
+        XCTAssertGreaterThanOrEqual(
+            AudioSessionRecovery.candidateValidationTimeoutSeconds,
+            3
+        )
+    }
+
+    func testFailedOfferKeepsAStableEndpointLongEnoughForUdpRecovery() {
+        XCTAssertGreaterThanOrEqual(
+            AudioSessionRecovery.failedOfferRotationSeconds,
+            15
+        )
+    }
+
     func testNewAppProcessOffersFreshSessionUntilItAuthenticatesAPacket() {
         XCTAssertTrue(AudioSessionRecovery.shouldOfferSession(
             controlIsReady: true,
             wifiIsConnected: true,
-            authenticatedPacketCount: 0
+            acceptedPacketCount: 0
         ))
         XCTAssertFalse(AudioSessionRecovery.shouldOfferSession(
             controlIsReady: true,
             wifiIsConnected: true,
-            authenticatedPacketCount: 1
+            acceptedPacketCount: 1
         ))
     }
 
@@ -19,20 +33,22 @@ final class AudioSessionRecoveryTests: XCTestCase {
         XCTAssertFalse(AudioSessionRecovery.shouldOfferSession(
             controlIsReady: false,
             wifiIsConnected: true,
-            authenticatedPacketCount: 0
+            acceptedPacketCount: 0
         ))
         XCTAssertFalse(AudioSessionRecovery.shouldOfferSession(
             controlIsReady: true,
             wifiIsConnected: false,
-            authenticatedPacketCount: 0
+            acceptedPacketCount: 0
         ))
     }
 
-    func testRotatesSessionWhenAReadyDeviceRebootsOnTheSameWifi() {
+    func testRotatesSessionAfterDeviceRemainsNotReadyOnTheSameWifi() {
         XCTAssertTrue(AudioSessionRecovery.shouldRotateSession(
             previousDeviceWasReady: true,
             currentDeviceIsReady: false,
-            wifiIsConnected: true
+            wifiIsConnected: true,
+            secondsContinuouslyNotReady: 5,
+            settlementInterval: 5
         ))
     }
 
@@ -40,30 +56,26 @@ final class AudioSessionRecoveryTests: XCTestCase {
         XCTAssertFalse(AudioSessionRecovery.shouldRotateSession(
             previousDeviceWasReady: false,
             currentDeviceIsReady: false,
-            wifiIsConnected: true
+            wifiIsConnected: true,
+            secondsContinuouslyNotReady: 30,
+            settlementInterval: 5
         ))
         XCTAssertFalse(AudioSessionRecovery.shouldRotateSession(
             previousDeviceWasReady: true,
             currentDeviceIsReady: false,
-            wifiIsConnected: false
+            wifiIsConnected: false,
+            secondsContinuouslyNotReady: 30,
+            settlementInterval: 5
         ))
     }
 
-    func testRotatesWhenDeviceIsWaitingButCurrentReceiverHasOldAuthenticatedPackets() {
-        XCTAssertTrue(AudioSessionRecovery.shouldRotateStaleAuthenticatedSession(
-            deviceAudioIsReady: false,
+    func testDoesNotRotateDuringTheExpectedNewOfferTransition() {
+        XCTAssertFalse(AudioSessionRecovery.shouldRotateSession(
+            previousDeviceWasReady: true,
+            currentDeviceIsReady: false,
             wifiIsConnected: true,
-            authenticatedPacketCount: 222
-        ))
-        XCTAssertFalse(AudioSessionRecovery.shouldRotateStaleAuthenticatedSession(
-            deviceAudioIsReady: true,
-            wifiIsConnected: true,
-            authenticatedPacketCount: 222
-        ))
-        XCTAssertFalse(AudioSessionRecovery.shouldRotateStaleAuthenticatedSession(
-            deviceAudioIsReady: false,
-            wifiIsConnected: true,
-            authenticatedPacketCount: 0
+            secondsContinuouslyNotReady: 1,
+            settlementInterval: 5
         ))
     }
 

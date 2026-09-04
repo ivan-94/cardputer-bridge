@@ -25,12 +25,20 @@ final class CardputerBridgeAppDelegate: NSObject, NSApplicationDelegate {
     private let nearbyWiFi = NearbyWiFiController()
     private var window: NSWindow?
     private var statusItem: NSStatusItem?
+    #if DEBUG
+    private let localFirmwareOTA = LocalFirmwareOTAHarness()
+    #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard claimPrimaryApplicationInstance() else { return }
         DispatchQueue.main.async { [weak self] in
             self?.createMainWindow()
             self?.installStatusItem()
+            #if DEBUG
+            if let self {
+                localFirmwareOTA.start(bluetooth: bluetooth)
+            }
+            #endif
         }
     }
 
@@ -166,6 +174,126 @@ final class CardputerBridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+#if DEBUG
+@MainActor
+private final class LocalFirmwareOTAHarness {
+    private var task: Task<Void, Never>?
+    private var relay: FirmwareRelayServer?
+
+    func start(bluetooth: BLEBridgeController) {
+        guard task == nil,
+              let imagePath = ProcessInfo.processInfo.environment[
+                  "CARDPUTER_BRIDGE_LOCAL_OTA_PATH"
+              ],
+              let version = ProcessInfo.processInfo.environment[
+                  "CARDPUTER_BRIDGE_LOCAL_OTA_VERSION"
+              ],
+              !imagePath.isEmpty,
+              !version.isEmpty else { return }
+
+        let imageURL = URL(fileURLWithPath: imagePath)
+        task = Task { [weak self, weak bluetooth] in
+            guard let self, let bluetooth else { return }
+            publish("waiting_for_control_channel", version: version)
+            for _ in 0..<120 {
+                guard !Task.isCancelled else { return }
+                if bluetooth.state.canSendCommand { break }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            guard bluetooth.state.canSendCommand else {
+                publish("failed_control_channel_timeout", version: version)
+                return
+            }
+
+            let candidate = FirmwareRelayServer()
+            do {
+                let relayURL = try await candidate.prepareLocal(
+                    imageURL: imageURL
+                )
+                relay = candidate
+                guard bluetooth.startFirmwareOTA(
+                    version: version,
+                    url: relayURL.absoluteString,
+                    usbPowerVerified: false
+                ) else {
+                    throw LocalFirmwareOTAHarnessError.commandRejected
+                }
+                publish("command_sent", version: version)
+            } catch {
+                candidate.stop()
+                relay = nil
+                publish(
+                    "failed_\(String(describing: error))",
+                    version: version
+                )
+                return
+            }
+
+            var lastPhase = ""
+            var lastProgress = -1
+            var stagnantPolls = 0
+            // A local relay can be deliberately throttled by Wi-Fi/BLE
+            // coexistence. Time out only when progress itself stalls for two
+            // minutes, rather than aborting a healthy transfer at a fixed
+            // five-minute wall-clock deadline.
+            for _ in 0..<3600 {
+                guard !Task.isCancelled else { return }
+                if let event = bluetooth.firmwareOTAEvent {
+                    publish(
+                        "\(event.phase)_\(event.progress)_\(event.error)",
+                        version: version
+                    )
+                    if event.phase == "restarting" || event.phase == "failed" {
+                        relay?.stop()
+                        relay = nil
+                        return
+                    }
+                    if event.phase != lastPhase || event.progress != lastProgress {
+                        lastPhase = event.phase
+                        lastProgress = event.progress
+                        stagnantPolls = 0
+                    } else {
+                        stagnantPolls += 1
+                    }
+                    if stagnantPolls >= 240 {
+                        relay?.stop()
+                        relay = nil
+                        publish("failed_ota_stalled", version: version)
+                        return
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            relay?.stop()
+            relay = nil
+            publish("failed_ota_timeout", version: version)
+        }
+    }
+
+    private func publish(_ phase: String, version: String) {
+        let message = "LOCAL_OTA phase=\(phase) version=\(version)"
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        guard let path = ProcessInfo.processInfo.environment[
+            "CARDPUTER_BRIDGE_LOCAL_OTA_PROBE_PATH"
+        ] else { return }
+        let payload: [String: Any] = [
+            "phase": phase,
+            "version": version,
+            "updated_at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys]
+        ) else { return }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+}
+
+private enum LocalFirmwareOTAHarnessError: Error {
+    case commandRejected
+}
+#endif
+
 extension CardputerBridgeAppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -231,6 +359,7 @@ private struct BridgeRootView: View {
     @State private var lastAudioOfferAttemptAt = Date.distantPast
     @State private var lastConfigSyncAttemptAt = Date.distantPast
     @State private var lastObservedDeviceAudioReady = false
+    @State private var deviceAudioNotReadySince: Date?
     @AppStorage("cardputerBridge.setupCompleted") private var setupCompleted = false
     @State private var setupStep = 0
     @State private var selectedSection: DailySection = .overview
@@ -252,7 +381,7 @@ private struct BridgeRootView: View {
         .task {
             bluetooth.start()
             audioDriverInstaller.refresh()
-            audio.onAuthenticatedTestFrame = { [weak bluetooth] sessionID in
+            audio.onSessionTestFrame = { [weak bluetooth] sessionID in
                 Task { @MainActor in
                     bluetooth?.confirmAudioReady(sessionID: sessionID)
                 }
@@ -264,7 +393,9 @@ private struct BridgeRootView: View {
                 try? await Task.sleep(for: .seconds(2))
                 bluetooth.tickHarnessMicrophone()
                 bluetooth.tickHarnessShortcutLearning()
-                offerAudioToAlreadyConnectedDeviceIfNeeded()
+                if !recoverAudioSessionAfterDeviceRestartIfNeeded() {
+                    offerAudioToAlreadyConnectedDeviceIfNeeded()
+                }
                 syncShortcutConfigurationIfNeeded()
             }
         }
@@ -1809,36 +1940,20 @@ private struct BridgeRootView: View {
     }
 
     private func offerAudioToAlreadyConnectedDeviceIfNeeded() {
-        let retryInterval: TimeInterval = 1.5
+        let settlementInterval = AudioSessionRecovery.failedOfferRotationSeconds
         let wifiIsConnected = bluetooth.deviceStateJSON.contains(
             "\"wifi\":\"connected\""
         )
-        let deviceAudioIsReady = bluetooth.deviceStateJSON.contains(
-            "\"audio\":\"ready\""
-        )
-        if bluetooth.state.phase == .ready,
-           AudioSessionRecovery.shouldRotateStaleAuthenticatedSession(
-               deviceAudioIsReady: deviceAudioIsReady,
-               wifiIsConnected: wifiIsConnected,
-               authenticatedPacketCount: audio.metrics.acceptedPackets
-           ) {
-            // The device rebooted or lost its receiver while this App still
-            // holds authenticated frames from the previous stream session.
-            // Rotate before offering so sequence zero never reuses a GCM nonce.
-            audio.start()
-            lastOfferedSessionID = nil
-            lastAudioOfferAttemptAt = .distantPast
-            return
-        }
+        let elapsed = Date().timeIntervalSince(lastAudioOfferAttemptAt)
         guard AudioSessionRecovery.shouldOfferSession(
             controlIsReady: bluetooth.state.phase == .ready,
             wifiIsConnected: wifiIsConnected,
-            authenticatedPacketCount: audio.metrics.acceptedPackets
+            acceptedPacketCount: audio.metrics.acceptedPackets
         ) else {
             return
         }
         // The device can still report `audio:ready` for a stream session owned by
-        // the previous App process. Only an authenticated frame received by
+        // the previous App process. Only a current-session frame received by
         // this process proves that both endpoints share the current session.
         guard let offer = audio.offer else {
             if audio.status == .stopped || audio.status == .failed {
@@ -1846,21 +1961,21 @@ private struct BridgeRootView: View {
             }
             return
         }
-        let elapsed = Date().timeIntervalSince(lastAudioOfferAttemptAt)
         if AudioSessionRecovery.shouldRotateFailedOffer(
             currentSessionID: offer.sessionID,
             lastOfferedSessionID: lastOfferedSessionID,
             elapsedSeconds: elapsed,
-            retryInterval: retryInterval
+            retryInterval: settlementInterval
         ) {
             // Retrying the same session would reset the device sequence while
-            // reusing the AES-GCM nonce space. A retry is a fresh session.
+            // the receiver still treats it as one ordered stream.
             audio.start()
             lastOfferedSessionID = nil
             lastAudioOfferAttemptAt = .distantPast
             return
         }
-        guard lastOfferedSessionID != offer.sessionID || elapsed >= retryInterval else {
+        guard lastOfferedSessionID != offer.sessionID ||
+                elapsed >= settlementInterval else {
             return
         }
         lastAudioOfferAttemptAt = Date()
@@ -1874,20 +1989,39 @@ private struct BridgeRootView: View {
         let wifiConnected = bluetooth.deviceStateJSON.contains(
             "\"wifi\":\"connected\""
         )
+        if currentReady {
+            lastObservedDeviceAudioReady = true
+            deviceAudioNotReadySince = nil
+            return false
+        }
+        guard lastObservedDeviceAudioReady, wifiConnected else {
+            if !wifiConnected {
+                deviceAudioNotReadySince = nil
+            }
+            return false
+        }
+        let now = Date()
+        if deviceAudioNotReadySince == nil {
+            deviceAudioNotReadySince = now
+        }
         if AudioSessionRecovery.shouldRotateSession(
             previousDeviceWasReady: lastObservedDeviceAudioReady,
             currentDeviceIsReady: currentReady,
-            wifiIsConnected: wifiConnected
+            wifiIsConnected: wifiConnected,
+            secondsContinuouslyNotReady: now.timeIntervalSince(
+                deviceAudioNotReadySince ?? now
+            ),
+            settlementInterval: 5
         ) {
             // A reboot resets the device sequence counter. Reusing the old
-            // session would both reject sequence zero and reuse AES-GCM nonces.
+            // session would make the receiver reject sequence zero as stale.
             audio.start()
             lastOfferedSessionID = nil
             lastAudioOfferAttemptAt = .distantPast
             lastObservedDeviceAudioReady = currentReady
+            deviceAudioNotReadySince = nil
             return true
         }
-        lastObservedDeviceAudioReady = currentReady
         return false
     }
 

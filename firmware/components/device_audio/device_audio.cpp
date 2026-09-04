@@ -5,6 +5,7 @@
 
 #include <M5Unified.h>
 #include <esp_event.h>
+#include <esp_log.h>
 #include <esp_netif.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
@@ -12,25 +13,45 @@
 #include <freertos/task.h>
 #include <lwip/inet.h>
 #include <lwip/sockets.h>
-#include <lwip/tcp.h>
-#include <psa/crypto.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <unistd.h>
 
 namespace cardbridge {
 namespace {
 
 constexpr std::uint32_t kSampleRate = 16000;
-constexpr std::size_t kTestPacketCount = 3;
+// The receiver activates after any run of three contiguous current-session
+// proofs. Repeat a short burst while waiting so ARP resolution, transient
+// coexistence stalls, or isolated UDP loss cannot strand the session.
+constexpr std::size_t kTestPacketCount = 5;
+constexpr std::size_t kEndPacketCount = 3;
+constexpr std::uint64_t kProofRetryIntervalMs = 500;
 constexpr std::uint32_t kInactiveAudioWaitMs = 250;
 constexpr std::uint64_t kWifiTelemetryRefreshIntervalMs = 5000;
-constexpr std::size_t kCaptureRingFrames = 20;
+// Twenty-millisecond frames make ten slots a 200 ms hard upper bound. UDP
+// sends are nonblocking, so a larger queue would only turn scheduler pressure
+// into stale audio and user-visible latency.
+constexpr std::size_t kCaptureRingFrames = 10;
+constexpr std::size_t kSendRetryCount = 3;
+constexpr std::uint32_t kSendRetryDelayMs = 1;
+// DSCP Expedited Forwarding. Access points with WMM map this traffic to the
+// voice queue, reducing the chance that BLE coexistence or ordinary LAN load
+// turns a sequence of timely UDP sends into one late delivery burst.
+constexpr int kAudioIPTypeOfService = 0xB8;
+constexpr BaseType_t kCaptureTaskCore = 1;
+constexpr BaseType_t kTransportTaskCore = 1;
+constexpr UBaseType_t kMicrophoneTaskPriority = 10;
 constexpr UBaseType_t kCaptureTaskPriority = 8;
-constexpr UBaseType_t kTransportTaskPriority = 4;
+// I2S owns the hard sample clock. Once a completed frame reaches the capture
+// ring, drain it before the next 20 ms frame arrives. All three tasks stay on
+// core 1; Wi-Fi, Bluetooth and the UI run on core 0 in this firmware build.
+constexpr UBaseType_t kTransportTaskPriority = 9;
 
 portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 std::array<std::uint8_t, 33> s_staged_ssid{};
@@ -51,7 +72,15 @@ std::atomic_uint32_t s_wifi_generation{0};
 std::atomic_uint32_t s_next_wire_sequence{0};
 std::atomic_uint32_t s_stream_frames_sent{0};
 std::atomic_uint32_t s_stream_failures{0};
+std::atomic_int32_t s_last_stream_error{0};
 std::atomic_uint32_t s_capture_overruns{0};
+std::atomic_uint32_t s_microphone_record_failures{0};
+std::atomic_uint32_t s_capture_ring_drops{0};
+std::atomic_uint32_t s_capture_ring_high_water{0};
+std::atomic_uint32_t s_maximum_capture_gap_ms{0};
+std::atomic_uint32_t s_maximum_transport_gap_ms{0};
+std::atomic_uint32_t s_wifi_disconnect_count{0};
+std::atomic_int32_t s_last_wifi_disconnect_reason{0};
 std::atomic_uint32_t s_signal_level{0};
 std::atomic_uint32_t s_idle_wait_total{0};
 std::atomic_uint32_t s_notification_wake_total{0};
@@ -61,6 +90,26 @@ std::atomic_uint64_t s_last_wifi_telemetry_ms{0};
 std::atomic<TaskHandle_t> s_capture_task_handle{nullptr};
 std::atomic<TaskHandle_t> s_transport_task_handle{nullptr};
 AudioFrameRing<kCaptureRingFrames> s_capture_ring;
+
+// UDP redundancy needs several MTU-sized buffers, but their lifetime is the
+// whole transport task. Keep them in BSS instead of consuming the task stack
+// while lwIP also needs call depth.
+struct AudioTransportWorkspace {
+    std::array<std::int16_t, kAudioFrameSamples> silence{};
+    CapturedAudioFrame captured{};
+    std::array<
+        std::array<std::uint8_t, kAudioStreamFrameBytes>,
+        kAudioRedundancyLagFrames
+    > redundancy_history{};
+    std::array<std::uint32_t, kAudioRedundancyLagFrames>
+        redundancy_history_sequences{};
+    std::array<std::uint32_t, kAudioRedundancyLagFrames>
+        redundancy_history_capture_indices{};
+    std::array<std::uint8_t, kAudioStreamFrameBytes> current{};
+    std::array<std::uint8_t, kAudioRedundantDatagramBytes> datagram{};
+};
+
+AudioTransportWorkspace s_transport_workspace;
 
 void notify_task(const std::atomic<TaskHandle_t>& handle) {
     const auto task = handle.load(std::memory_order_acquire);
@@ -74,6 +123,16 @@ void notify_audio_tasks() {
     notify_task(s_transport_task_handle);
 }
 
+void record_maximum(std::atomic_uint32_t& destination, std::uint32_t value) {
+    auto current = destination.load(std::memory_order_relaxed);
+    while (value > current && !destination.compare_exchange_weak(
+               current,
+               value,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+
 void wait_for_audio_work() {
     s_idle_wait_total.fetch_add(1, std::memory_order_relaxed);
     if (ulTaskNotifyTake(
@@ -81,6 +140,23 @@ void wait_for_audio_work() {
             pdMS_TO_TICKS(kInactiveAudioWaitMs)) > 0) {
         s_notification_wake_total.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+bool set_runtime_wifi_power_save(wifi_ps_type_t mode) {
+    const auto result = esp_wifi_set_ps(mode);
+    if (result == ESP_OK) return true;
+    s_last_stream_error.store(
+        -2000 - static_cast<std::int32_t>(result),
+        std::memory_order_relaxed
+    );
+    s_stream_failures.fetch_add(1, std::memory_order_relaxed);
+    ESP_LOGE(
+        "audio-wifi",
+        "wifi power-save transition failed mode=%d error=%s",
+        static_cast<int>(mode),
+        esp_err_to_name(result)
+    );
+    return false;
 }
 
 void cache_wifi_ssid(const wifi_config_t& config) {
@@ -130,7 +206,7 @@ void refresh_wifi_telemetry(bool force) {
     }
 }
 
-void wifi_event(void*, esp_event_base_t base, std::int32_t id, void*) {
+void wifi_event(void*, esp_event_base_t base, std::int32_t id, void* event_data) {
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_wifi_connected.store(true, std::memory_order_release);
         s_wifi_generation.fetch_add(1, std::memory_order_acq_rel);
@@ -139,6 +215,19 @@ void wifi_event(void*, esp_event_base_t base, std::int32_t id, void*) {
         return;
     }
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        const auto* disconnected = static_cast<const wifi_event_sta_disconnected_t*>(
+            event_data
+        );
+        const auto reason = disconnected == nullptr ? 0 : disconnected->reason;
+        const auto disconnect_count =
+            s_wifi_disconnect_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        s_last_wifi_disconnect_reason.store(reason, std::memory_order_relaxed);
+        ESP_LOGW(
+            "audio-wifi",
+            "[DEBUG-wifi-drop-a17c] reason=%u count=%u",
+            static_cast<unsigned>(reason),
+            static_cast<unsigned>(disconnect_count)
+        );
         s_wifi_connected.store(false, std::memory_order_release);
         s_receiver_ready.store(false, std::memory_order_release);
         s_wifi_rssi.store(0, std::memory_order_relaxed);
@@ -160,16 +249,24 @@ bool copy_offer(AudioOffer& result) {
     return true;
 }
 
-bool seal_and_send(
-    int socket_fd,
-    psa_key_id_t key_id,
+bool same_audio_offer(const AudioOffer& left, const AudioOffer& right) {
+    return left.ipv4 == right.ipv4 &&
+        left.port == right.port &&
+        left.session_id == right.session_id;
+}
+
+bool encode_audio_frame(
     const AudioOffer& offer,
     const std::int16_t* samples,
     std::uint8_t flags,
     std::uint32_t sequence,
-    std::uint32_t capture_sample_index
+    std::uint32_t capture_sample_index,
+    std::uint8_t* stream_frame,
+    std::size_t stream_frame_size
 ) {
-    std::array<std::uint8_t, kAudioStreamFrameBytes> stream_frame{};
+    if (stream_frame == nullptr || stream_frame_size < kAudioStreamFrameBytes) {
+        return false;
+    }
     const AudioPacketHeader header{
         flags,
         offer.session_id,
@@ -178,70 +275,92 @@ bool seal_and_send(
         kAudioFrameSamples,
         kAudioPayloadBytes,
     };
-    if (!encode_audio_header(header, stream_frame.data(), stream_frame.size())) {
+    return encode_audio_packet(header, samples, stream_frame, stream_frame_size);
+}
+
+bool send_datagram(int socket_fd, const std::uint8_t* bytes, std::size_t size) {
+    for (std::size_t attempt = 0; attempt <= kSendRetryCount; ++attempt) {
+        const auto result = send(socket_fd, bytes, size, 0);
+        if (result == static_cast<ssize_t>(size)) return true;
+        const auto error = result < 0 ? errno : -1002;
+        const bool queue_pressure = error == ENOMEM || error == EAGAIN ||
+            error == EWOULDBLOCK;
+        if (queue_pressure && attempt < kSendRetryCount) {
+            // Capture has its own task and a bounded 200 ms ring. Yielding a
+            // millisecond here lets lwIP retire a TX buffer without blocking
+            // the microphone clock or turning pressure into silent loss.
+            vTaskDelay(pdMS_TO_TICKS(kSendRetryDelayMs));
+            continue;
+        }
+        s_last_stream_error.store(error, std::memory_order_relaxed);
         return false;
     }
-    std::array<std::uint8_t, kAudioNonceBytes> nonce{};
-    make_audio_nonce(offer.session_id, sequence, nonce.data());
-    const auto* plaintext = reinterpret_cast<const std::uint8_t*>(samples);
-    std::uint8_t* ciphertext = stream_frame.data() + kAudioHeaderBytes;
-    std::size_t encrypted_size = 0;
-    if (psa_aead_encrypt(
-            key_id,
-            PSA_ALG_GCM,
-            nonce.data(),
-            nonce.size(),
-            stream_frame.data(),
-            kAudioHeaderBytes,
-            plaintext,
-            kAudioPayloadBytes,
-            ciphertext,
-            kAudioPayloadBytes + kAudioAuthTagBytes,
-            &encrypted_size) != PSA_SUCCESS ||
-        encrypted_size != kAudioPayloadBytes + kAudioAuthTagBytes) {
-        return false;
-    }
+    return false;
+}
+
+bool encode_and_send(
+    int socket_fd,
+    const AudioOffer& offer,
+    const std::int16_t* samples,
+    std::uint8_t flags,
+    std::uint32_t sequence,
+    std::uint32_t capture_sample_index
+) {
+    std::array<std::uint8_t, kAudioStreamFrameBytes> stream_frame{};
+    return encode_audio_frame(
+        offer,
+        samples,
+        flags,
+        sequence,
+        capture_sample_index,
+        stream_frame.data(),
+        stream_frame.size()
+    ) && send_datagram(socket_fd, stream_frame.data(), stream_frame.size());
+}
+
+std::size_t send_session_proofs(
+    int socket_fd,
+    const AudioOffer& offer,
+    const std::int16_t* silence
+) {
     std::size_t sent = 0;
-    while (sent < stream_frame.size()) {
-        const auto result = send(
-            socket_fd,
-            stream_frame.data() + sent,
-            stream_frame.size() - sent,
-            0
+    for (std::size_t index = 0; index < kTestPacketCount; ++index) {
+        const auto sequence = s_next_wire_sequence.fetch_add(
+            1,
+            std::memory_order_relaxed
         );
-        if (result <= 0) return false;
-        sent += static_cast<std::size_t>(result);
+        if (encode_and_send(
+                socket_fd,
+                offer,
+                silence,
+                kAudioFlagMuted | kAudioFlagTest,
+                sequence,
+                0)) {
+            s_stream_frames_sent.fetch_add(1, std::memory_order_relaxed);
+            ++sent;
+        } else {
+            s_stream_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
-    return true;
+    if (sent == kTestPacketCount) {
+        s_last_stream_error.store(0, std::memory_order_relaxed);
+    }
+    return sent;
 }
 
 int connect_audio_stream(const AudioOffer& offer) {
-    const int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    const int socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socket_fd < 0) return -1;
-
-    int enabled = 1;
     if (setsockopt(
-        socket_fd,
-        IPPROTO_TCP,
-        TCP_NODELAY,
-        &enabled,
-        sizeof(enabled)
-    ) != 0) {
+            socket_fd,
+            IPPROTO_IP,
+            IP_TOS,
+            &kAudioIPTypeOfService,
+            sizeof(kAudioIPTypeOfService)) != 0) {
         close(socket_fd);
         return -1;
     }
-    timeval send_timeout{0, 200'000};
-    if (setsockopt(
-        socket_fd,
-        SOL_SOCKET,
-        SO_SNDTIMEO,
-        &send_timeout,
-        sizeof(send_timeout)
-    ) != 0) {
-        close(socket_fd);
-        return -1;
-    }
-
     sockaddr_in target{};
     target.sin_family = AF_INET;
     target.sin_port = htons(offer.port);
@@ -251,6 +370,14 @@ int connect_audio_stream(const AudioOffer& offer) {
             reinterpret_cast<const sockaddr*>(&target),
             sizeof(target)
         ) != 0) {
+        close(socket_fd);
+        return -1;
+    }
+    // UDP connect only records the peer locally and does not wait for network
+    // traffic. Switch to nonblocking after it succeeds: lwIP may otherwise
+    // report EINPROGRESS and make a healthy endpoint look unavailable.
+    const int flags = fcntl(socket_fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) != 0) {
         close(socket_fd);
         return -1;
     }
@@ -268,6 +395,7 @@ void audio_capture_task(void*) {
     std::uint32_t sample_index = 0;
     bool mic_running = false;
     bool capture_pipeline_active = false;
+    std::uint64_t previous_capture_complete_us = 0;
 
     while (true) {
         const std::uint32_t generation = s_offer_generation.load(
@@ -283,6 +411,7 @@ void audio_capture_task(void*) {
                 M5.Mic.end();
                 mic_running = false;
                 capture_pipeline_active = false;
+                previous_capture_complete_us = 0;
             }
             wait_for_audio_work();
             continue;
@@ -296,6 +425,7 @@ void audio_capture_task(void*) {
             }
             sample_index = 0;
             active_generation = generation;
+            previous_capture_complete_us = 0;
         }
 
         if (!capture_pipeline_active) {
@@ -314,6 +444,7 @@ void audio_capture_task(void*) {
                 M5.Mic.end();
                 mic_running = false;
                 s_capture_overruns.fetch_add(1, std::memory_order_relaxed);
+                s_microphone_record_failures.fetch_add(1, std::memory_order_relaxed);
                 vTaskDelay(1);
                 continue;
             }
@@ -333,10 +464,24 @@ void audio_capture_task(void*) {
             M5.Mic.end();
             mic_running = false;
             capture_pipeline_active = false;
+            previous_capture_complete_us = 0;
             continue;
         }
 
         const auto& samples = sample_buffers[completed_buffer_index];
+        const auto capture_complete_us = static_cast<std::uint64_t>(
+            esp_timer_get_time()
+        );
+        if (previous_capture_complete_us != 0 &&
+            capture_complete_us >= previous_capture_complete_us) {
+            record_maximum(
+                s_maximum_capture_gap_ms,
+                static_cast<std::uint32_t>(
+                    (capture_complete_us - previous_capture_complete_us) / 1000
+                )
+            );
+        }
+        previous_capture_complete_us = capture_complete_us;
         CapturedAudioFrame frame{};
         frame.samples = samples;
         frame.offer_generation = generation;
@@ -362,12 +507,17 @@ void audio_capture_task(void*) {
         );
         if (!s_capture_ring.try_push(frame)) {
             s_capture_overruns.fetch_add(1, std::memory_order_relaxed);
+            s_capture_ring_drops.fetch_add(1, std::memory_order_relaxed);
         } else {
+            record_maximum(
+                s_capture_ring_high_water,
+                static_cast<std::uint32_t>(s_capture_ring.size())
+            );
             notify_task(s_transport_task_handle);
         }
 
         // Only a fixed-size memory copy happens before this re-submit. Network
-        // connection, encryption and writes live on the transport task.
+        // connection, packet encoding and writes live on the transport task.
         auto& capture = sample_buffers[completed_buffer_index];
         if (M5.Mic.record(
                 capture.data(),
@@ -377,9 +527,11 @@ void audio_capture_task(void*) {
             completed_buffer_index ^= 1U;
         } else {
             s_capture_overruns.fetch_add(1, std::memory_order_relaxed);
+            s_microphone_record_failures.fetch_add(1, std::memory_order_relaxed);
             M5.Mic.end();
             mic_running = false;
             capture_pipeline_active = false;
+            previous_capture_complete_us = 0;
         }
     }
 }
@@ -389,18 +541,18 @@ void audio_transport_task(void*) {
         xTaskGetCurrentTaskHandle(),
         std::memory_order_release
     );
-    const std::array<std::int16_t, kAudioFrameSamples> silence{};
+    auto& workspace = s_transport_workspace;
     std::uint32_t active_generation = 0;
     std::uint32_t active_wifi_generation = 0;
     int socket_fd = -1;
     AudioOffer offer{};
-    psa_key_id_t key_id = 0;
-    if (psa_crypto_init() != PSA_SUCCESS) {
-        s_stream_failures.fetch_add(1, std::memory_order_relaxed);
-        s_transport_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(nullptr);
-        return;
-    }
+    std::size_t redundancy_history_count = 0;
+    std::size_t redundancy_history_cursor = 0;
+    bool last_frame_valid = false;
+    std::uint32_t last_capture_sample_index = 0;
+    std::uint64_t last_proof_attempt_ms = 0;
+    bool recording_interval_active = false;
+    std::uint64_t previous_live_send_us = 0;
 
     while (true) {
         const auto generation = s_offer_generation.load(std::memory_order_acquire);
@@ -412,6 +564,11 @@ void audio_transport_task(void*) {
             }
             s_receiver_ready.store(false, std::memory_order_release);
             s_capture_ring.clear();
+            redundancy_history_count = 0;
+            redundancy_history_cursor = 0;
+            last_frame_valid = false;
+            recording_interval_active = false;
+            previous_live_send_us = 0;
             wait_for_audio_work();
             continue;
         }
@@ -420,32 +577,17 @@ void audio_transport_task(void*) {
         if (offer_changed) {
             if (socket_fd >= 0) close(socket_fd);
             socket_fd = -1;
-            if (key_id != 0) {
-                (void)psa_destroy_key(key_id);
-                key_id = 0;
-            }
-            psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-            psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_ENCRYPT);
-            psa_set_key_algorithm(&attributes, PSA_ALG_GCM);
-            psa_set_key_type(&attributes, PSA_KEY_TYPE_AES);
-            psa_set_key_bits(&attributes, offer.key.size() * 8);
-            const auto import_status = psa_import_key(
-                &attributes,
-                offer.key.data(),
-                offer.key.size(),
-                &key_id
-            );
-            psa_reset_key_attributes(&attributes);
-            if (import_status != PSA_SUCCESS) {
-                s_stream_failures.fetch_add(1, std::memory_order_relaxed);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
             s_next_wire_sequence.store(0, std::memory_order_release);
             s_receiver_ready.store(false, std::memory_order_release);
             s_capture_ring.clear();
+            redundancy_history_count = 0;
+            redundancy_history_cursor = 0;
+            last_frame_valid = false;
+            recording_interval_active = false;
+            previous_live_send_us = 0;
             active_generation = generation;
             active_wifi_generation = 0;
+            last_proof_attempt_ms = 0;
         }
 
         const auto wifi_generation = s_wifi_generation.load(
@@ -457,74 +599,174 @@ void audio_transport_task(void*) {
             if (socket_fd >= 0) close(socket_fd);
             socket_fd = connect_audio_stream(offer);
             if (socket_fd < 0) {
+                s_last_stream_error.store(
+                    errno == 0 ? -1001 : errno,
+                    std::memory_order_relaxed
+                );
                 s_stream_failures.fetch_add(1, std::memory_order_relaxed);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
             s_receiver_ready.store(false, std::memory_order_release);
             s_capture_ring.clear();
-            bool tests_sent = true;
-            for (std::size_t index = 0; index < kTestPacketCount; ++index) {
-                const auto sequence = s_next_wire_sequence.fetch_add(
-                    1,
-                    std::memory_order_relaxed
-                );
-                if (seal_and_send(
-                        socket_fd,
-                        key_id,
-                        offer,
-                        silence.data(),
-                        kAudioFlagMuted | kAudioFlagTest,
-                        sequence,
-                        0)) {
-                    s_stream_frames_sent.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    s_stream_failures.fetch_add(1, std::memory_order_relaxed);
-                    tests_sent = false;
-                    break;
-                }
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-            if (!tests_sent) {
-                close(socket_fd);
-                socket_fd = -1;
-                continue;
-            }
+            redundancy_history_count = 0;
+            redundancy_history_cursor = 0;
+            last_frame_valid = false;
+            recording_interval_active = false;
+            previous_live_send_us = 0;
             active_wifi_generation = wifi_generation;
+            last_proof_attempt_ms = 0;
         }
 
-        if (!s_receiver_ready.load(std::memory_order_acquire) ||
-            !s_capture_enabled.load(std::memory_order_acquire)) {
+        if (!s_receiver_ready.load(std::memory_order_acquire)) {
+            const auto now_ms = static_cast<std::uint64_t>(
+                esp_timer_get_time() / 1000
+            );
+            if (last_proof_attempt_ms == 0 ||
+                now_ms - last_proof_attempt_ms >= kProofRetryIntervalMs) {
+                (void)send_session_proofs(
+                    socket_fd,
+                    offer,
+                    workspace.silence.data()
+                );
+                last_proof_attempt_ms = now_ms;
+            }
             s_capture_ring.clear();
+            redundancy_history_count = 0;
+            redundancy_history_cursor = 0;
+            last_frame_valid = false;
+            recording_interval_active = false;
             wait_for_audio_work();
             continue;
         }
 
-        CapturedAudioFrame frame{};
+        const bool capture_enabled = s_capture_enabled.load(
+            std::memory_order_acquire
+        );
+        if (capture_enabled) {
+            recording_interval_active = true;
+        } else if (!recording_interval_active) {
+            s_capture_ring.clear();
+            redundancy_history_count = 0;
+            redundancy_history_cursor = 0;
+            last_frame_valid = false;
+            wait_for_audio_work();
+            continue;
+        }
+
+        auto& frame = workspace.captured;
         if (!s_capture_ring.try_pop(frame)) {
+            if (!capture_enabled && recording_interval_active) {
+                // Close the interval explicitly. The receiver intentionally
+                // holds five frames for reordering, so silence alone cannot
+                // flush the final 100 ms. Three repeated
+                // end markers make the close robust without replaying audio.
+                const auto end_capture_index = last_frame_valid
+                    ? last_capture_sample_index + kAudioFrameSamples
+                    : 0;
+                for (std::size_t index = 0; index < kEndPacketCount; ++index) {
+                    const auto end_sequence = s_next_wire_sequence.fetch_add(
+                        1,
+                        std::memory_order_relaxed
+                    );
+                    if (encode_and_send(
+                            socket_fd,
+                            offer,
+                            workspace.silence.data(),
+                            kAudioFlagMuted | kAudioFlagEnd,
+                            end_sequence,
+                            end_capture_index)) {
+                        s_stream_frames_sent.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        s_stream_failures.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    vTaskDelay(1);
+                }
+                recording_interval_active = false;
+                previous_live_send_us = 0;
+                redundancy_history_count = 0;
+                redundancy_history_cursor = 0;
+                last_frame_valid = false;
+            }
             (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
             continue;
         }
-        if (!s_capture_enabled.load(std::memory_order_acquire) ||
-            !s_receiver_ready.load(std::memory_order_acquire)) {
+        if (!s_receiver_ready.load(std::memory_order_acquire)) {
             s_capture_ring.clear();
+            recording_interval_active = false;
             continue;
         }
         if (frame.offer_generation != active_generation) continue;
-        if (seal_and_send(
-                socket_fd,
-                key_id,
-                offer,
-                frame.samples.data(),
-                0,
+        const bool frame_valid = encode_audio_frame(
+            offer,
+            frame.samples.data(),
+            0,
+            frame.sequence,
+            frame.capture_sample_index,
+            workspace.current.data(),
+            workspace.current.size()
+        );
+        const std::uint8_t* datagram_bytes = workspace.current.data();
+        std::size_t datagram_size = workspace.current.size();
+        if (frame_valid &&
+            redundancy_history_count == kAudioRedundancyLagFrames &&
+            audio_frames_match_redundancy_lag(
+                workspace.redundancy_history_sequences[
+                    redundancy_history_cursor
+                ],
+                workspace.redundancy_history_capture_indices[
+                    redundancy_history_cursor
+                ],
                 frame.sequence,
-                frame.capture_sample_index)) {
+                frame.capture_sample_index
+            )) {
+            std::copy(
+                workspace.redundancy_history[redundancy_history_cursor].begin(),
+                workspace.redundancy_history[redundancy_history_cursor].end(),
+                workspace.datagram.begin()
+            );
+            std::copy(
+                workspace.current.begin(),
+                workspace.current.end(),
+                workspace.datagram.begin() + kAudioStreamFrameBytes
+            );
+            datagram_bytes = workspace.datagram.data();
+            datagram_size = workspace.datagram.size();
+        }
+        if (frame_valid && send_datagram(socket_fd, datagram_bytes, datagram_size)) {
             s_stream_frames_sent.fetch_add(1, std::memory_order_relaxed);
+            const auto now_us = static_cast<std::uint64_t>(esp_timer_get_time());
+            if (previous_live_send_us != 0 && now_us >= previous_live_send_us) {
+                record_maximum(
+                    s_maximum_transport_gap_ms,
+                    static_cast<std::uint32_t>(
+                        (now_us - previous_live_send_us) / 1000
+                    )
+                );
+            }
+            previous_live_send_us = now_us;
         } else {
+            if (!frame_valid) {
+                s_last_stream_error.store(-1003, std::memory_order_relaxed);
+            }
             s_stream_failures.fetch_add(1, std::memory_order_relaxed);
-            s_receiver_ready.store(false, std::memory_order_release);
-            close(socket_fd);
-            socket_fd = -1;
+        }
+        if (frame_valid) {
+            workspace.redundancy_history[redundancy_history_cursor] =
+                workspace.current;
+            workspace.redundancy_history_sequences[redundancy_history_cursor] =
+                frame.sequence;
+            workspace.redundancy_history_capture_indices[
+                redundancy_history_cursor
+            ] = frame.capture_sample_index;
+            redundancy_history_cursor =
+                (redundancy_history_cursor + 1) % kAudioRedundancyLagFrames;
+            redundancy_history_count = std::min<std::size_t>(
+                redundancy_history_count + 1,
+                kAudioRedundancyLagFrames
+            );
+            last_frame_valid = true;
+            last_capture_sample_index = frame.capture_sample_index;
         }
     }
 }
@@ -536,6 +778,14 @@ esp_err_t device_audio_start() {
     if (!s_started.compare_exchange_strong(expected, true)) {
         return ESP_OK;
     }
+    // The microphone worker drains I2S DMA and therefore has the only hard
+    // realtime deadline in this pipeline. M5Unified otherwise creates it as an
+    // unpinned priority-2 task, where Wi-Fi/BLE activity can delay capture long
+    // enough to create audible holes without any UDP sequence loss.
+    auto microphone_config = M5.Mic.config();
+    microphone_config.task_priority = kMicrophoneTaskPriority;
+    microphone_config.task_pinned_core = kCaptureTaskCore;
+    M5.Mic.config(microphone_config);
     esp_err_t result = esp_netif_init();
     if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) return result;
     result = esp_event_loop_create_default();
@@ -571,23 +821,25 @@ esp_err_t device_audio_start() {
         0
     );
     TaskHandle_t capture_task = nullptr;
-    BaseType_t task_result = xTaskCreate(
+    BaseType_t task_result = xTaskCreatePinnedToCore(
         audio_capture_task,
         "audio_capture",
-        6144,
+        4096,
         nullptr,
         kCaptureTaskPriority,
-        &capture_task
+        &capture_task,
+        kCaptureTaskCore
     );
     if (task_result != pdPASS) return ESP_ERR_NO_MEM;
     TaskHandle_t transport_task = nullptr;
-    task_result = xTaskCreate(
+    task_result = xTaskCreatePinnedToCore(
         audio_transport_task,
         "audio_stream",
         8192,
         nullptr,
         kTransportTaskPriority,
-        &transport_task
+        &transport_task,
+        kTransportTaskCore
     );
     if (task_result != pdPASS) {
         vTaskDelete(capture_task);
@@ -648,11 +900,26 @@ bool device_audio_apply_offer(const AudioOffer& offer) {
     if (offer.port == 0 || offer.session_id == 0 || offer.ipv4[0] == '\0') {
         return false;
     }
+    bool unchanged = false;
+    taskENTER_CRITICAL(&s_lock);
+    unchanged = s_offer_active.load(std::memory_order_relaxed) &&
+        same_audio_offer(s_offer, offer);
+    taskEXIT_CRITICAL(&s_lock);
+    if (unchanged) {
+        if (!s_receiver_ready.load(std::memory_order_acquire)) {
+            if (!set_runtime_wifi_power_save(WIFI_PS_NONE)) return false;
+        }
+        notify_audio_tasks();
+        return true;
+    }
+    s_receiver_ready.store(false, std::memory_order_release);
+    // Session establishment is short and latency-sensitive. Beacon batching
+    // here can lose the entire proof burst before live capture even starts.
+    if (!set_runtime_wifi_power_save(WIFI_PS_NONE)) return false;
     taskENTER_CRITICAL(&s_lock);
     s_offer = offer;
     taskEXIT_CRITICAL(&s_lock);
     s_offer_active.store(true, std::memory_order_release);
-    s_receiver_ready.store(false, std::memory_order_release);
     s_offer_generation.fetch_add(1, std::memory_order_acq_rel);
     notify_audio_tasks();
     return true;
@@ -661,6 +928,12 @@ bool device_audio_apply_offer(const AudioOffer& offer) {
 bool device_audio_mark_receiver_ready(std::uint64_t session_id) {
     AudioOffer offer{};
     if (!copy_offer(offer) || offer.session_id != session_id) return false;
+    if (!set_runtime_wifi_power_save(
+            s_capture_enabled.load(std::memory_order_acquire)
+                ? WIFI_PS_NONE
+                : WIFI_PS_MIN_MODEM)) {
+        return false;
+    }
     s_receiver_ready.store(true, std::memory_order_release);
     notify_audio_tasks();
     return true;
@@ -672,7 +945,13 @@ void device_audio_set_capture_enabled(bool enabled) {
         std::memory_order_acq_rel
     );
     if (previous != enabled) {
-        (void)esp_wifi_set_ps(enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
+        (void)set_runtime_wifi_power_save(
+            enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM
+        );
+        // Keep the ESP32 coexistence scheduler balanced. Hard Wi-Fi priority
+        // can starve the BLE heartbeat long enough to trip the fail-closed
+        // control lease. Disabling Wi-Fi power save while live keeps UDP
+        // datagrams timely without suppressing the BLE control plane.
         notify_audio_tasks();
     }
     if (!enabled) {
@@ -693,7 +972,15 @@ DeviceAudioStatus device_audio_status() {
         {},
         s_stream_frames_sent.load(std::memory_order_relaxed),
         s_stream_failures.load(std::memory_order_relaxed),
+        s_last_stream_error.load(std::memory_order_relaxed),
         s_capture_overruns.load(std::memory_order_relaxed),
+        s_microphone_record_failures.load(std::memory_order_relaxed),
+        s_capture_ring_drops.load(std::memory_order_relaxed),
+        s_capture_ring_high_water.load(std::memory_order_relaxed),
+        s_maximum_capture_gap_ms.load(std::memory_order_relaxed),
+        s_maximum_transport_gap_ms.load(std::memory_order_relaxed),
+        s_wifi_disconnect_count.load(std::memory_order_relaxed),
+        s_last_wifi_disconnect_reason.load(std::memory_order_relaxed),
         s_idle_wait_total.load(std::memory_order_relaxed),
         s_notification_wake_total.load(std::memory_order_relaxed),
         s_wifi_telemetry_refresh_total.load(std::memory_order_relaxed),

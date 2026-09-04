@@ -46,9 +46,10 @@ int main() {
         }
     }
 
-    // A recorder may connect long after the producer started. It must begin
-    // at the live edge instead of replaying stale audio accumulated before
-    // StartIO attached the consumer.
+    // A recorder may attach after the live producer has already primed the
+    // ring. Preserve that recent, leased audio as bounded pre-roll; otherwise
+    // Attach() discards the jitter reservoir and the first ordinary Wi-Fi
+    // scheduling pause becomes audible silence.
     consumer.Detach();
     Float32 stale[960]{};
     std::fill_n(stale, 960, -0.75F);
@@ -68,36 +69,48 @@ int main() {
         return 1;
     }
     for (UInt32 index = 0; index < 960; ++index) {
-        if (std::abs(output[index] - fresh[index]) > 0.000001F) {
-            std::fprintf(stderr, "FAIL late consumer replayed stale audio at %u\n", index);
+        if (std::abs(output[index] - stale[index]) > 0.000001F) {
+            std::fprintf(stderr, "FAIL late consumer discarded leased pre-roll at %u\n", index);
             return 1;
         }
     }
 
-    // Core Audio can keep a device started while no client callback is
-    // actually draining it. Even without another Attach call, a real-time
-    // render must shed an old backlog instead of adding more than a second of
-    // latency to the next recorder.
-    std::fill_n(stale, 960, -0.75F);
-    for (UInt32 chunk = 0; chunk < 7; ++chunk) {
+    // Keep a 1.28-second playout reservoir when backlog passes 1.32 seconds.
+    // A packet capture on the real LAN observed a 1.143-second ingress pause
+    // followed by complete delivery, so a shorter reservoir cannot preserve
+    // voice continuity without changing the physical transport.
+    for (UInt32 chunk = 0; chunk < 67; ++chunk) {
+        std::fill_n(stale, 960, static_cast<Float32>(chunk) / 1000.0F);
         if (!producer.WriteFloat32(stale, 960)) {
             std::fprintf(stderr, "FAIL active-consumer backlog staging\n");
             return 1;
         }
     }
-    std::fill_n(fresh, 960, 0.25F);
-    if (!producer.WriteFloat32(fresh, 960)) {
-        std::fprintf(stderr, "FAIL active-consumer live-edge write\n");
-        return 1;
-    }
     std::fill_n(output, 960, 0.0F);
     if (consumer.Render(output, 960) != 960) {
-        std::fprintf(stderr, "FAIL active-consumer live-edge render count\n");
+        std::fprintf(stderr, "FAIL active-consumer reservoir render count\n");
         return 1;
     }
     for (UInt32 index = 0; index < 960; ++index) {
-        if (std::abs(output[index] - fresh[index]) > 0.000001F) {
-            std::fprintf(stderr, "FAIL active consumer retained stale backlog at %u\n", index);
+        if (std::abs(output[index] - 0.003F) > 0.000001F) {
+            std::fprintf(stderr, "FAIL active consumer did not retain 1.28 s reservoir at %u\n", index);
+            return 1;
+        }
+    }
+
+    // The producer lease is a crash fail-safe, not the network jitter budget.
+    // A valid reservoir must remain readable through an ingress pause longer
+    // than the former 200 ms lease; otherwise the driver replaces buffered
+    // speech with digital silence even though no audio has been lost.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::fill_n(output, 960, 0.0F);
+    if (consumer.Render(output, 960) != 960) {
+        std::fprintf(stderr, "FAIL leased reservoir expired during network pause\n");
+        return 1;
+    }
+    for (UInt32 index = 0; index < 960; ++index) {
+        if (std::abs(output[index] - 0.004F) > 0.000001F) {
+            std::fprintf(stderr, "FAIL leased reservoir was silenced at %u\n", index);
             return 1;
         }
     }

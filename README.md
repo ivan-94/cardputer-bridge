@@ -70,6 +70,8 @@ shasum -a 256 -c Cardputer-Bridge-*-macOS-arm64.dmg.sha256
 
 在 macOS 的录音、会议或语音 App 中选择 **Cardputer Microphone**。声音由 Cardputer 通过 Wi-Fi 发送给 Mac，蓝牙继续负责静音和连接控制。
 
+当前版本使用 UDP 明文传输音频，仅适合可信局域网；能监听局域网流量的设备可能获取声音。蓝牙安全配对仍然保留。
+
 - 麦克风默认静音。
 - 开始录音时，Cardputer 的 LED 会以低亮度红色常亮。
 - 控制连接中断时，Cardputer 会停止发送声音。

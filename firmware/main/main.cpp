@@ -230,6 +230,8 @@ struct PendingControlCommand {
 
 QueueHandle_t g_control_command_queue = nullptr;
 std::atomic_uint32_t g_control_command_drops{0};
+std::atomic_bool g_audio_offer_rejected{false};
+std::atomic_bool g_audio_offer_state_dirty{false};
 
 void enqueue_control_command(const PendingControlCommand& command) {
     if (g_control_command_queue == nullptr ||
@@ -292,9 +294,14 @@ void on_vendor_command(const std::uint8_t* data, std::size_t length, void*) {
         return;
     }
     if (cardbridge::parse_audio_offer(message, command.offer)) {
+        g_audio_offer_rejected.store(false, std::memory_order_release);
         command.kind = PendingControlKind::kAudioOffer;
         enqueue_control_command(command);
         return;
+    }
+    if (message.find("\"type\":\"audio_offer\"") != std::string_view::npos) {
+        g_audio_offer_rejected.store(true, std::memory_order_release);
+        g_audio_offer_state_dirty.store(true, std::memory_order_release);
     }
     if (cardbridge::parse_audio_ready(message, command.session_id)) {
         command.kind = PendingControlKind::kAudioReady;
@@ -366,12 +373,12 @@ const char* mic_label(const cardbridge::BridgeState& state) {
 
 void publish_state(const cardbridge::BridgeState& state) {
     const auto audio = cardbridge::device_audio_status();
-    char state_json[224]{};
+    char state_json[192]{};
     std::snprintf(
         state_json,
         sizeof(state_json),
         "{\"v\":1,\"mic_intent\":\"%s\",\"capture_gate\":\"%s\",\"hid\":\"%s\","
-        "\"wifi\":\"%s\",\"ssid\":\"%s\",\"audio\":\"%s\","
+        "\"wifi\":\"%s\",\"ssid\":\"%s\",\"audio\":\"%s\",\"of\":%u,"
         "\"cfg_v\":\"%016" PRIx64 "\"}",
         state.mic_intent == cardbridge::MicIntent::kLive ? "live" : "muted",
         state.capture_gate == cardbridge::CaptureGate::kOpen ? "open" : "closed",
@@ -379,6 +386,11 @@ void publish_state(const cardbridge::BridgeState& state) {
         audio.wifi_connected ? "connected" : "offline",
         audio.wifi_ssid.data(),
         audio.receiver_ready ? "ready" : "waiting",
+        static_cast<unsigned>(
+            g_audio_offer_rejected.load(std::memory_order_acquire)
+                ? 2
+                : (audio.session_offered ? 1 : 0)
+        ),
         cardbridge::device_shortcut_config_version()
     );
     (void)ble_bridge_notify_state(state_json);
@@ -386,17 +398,31 @@ void publish_state(const cardbridge::BridgeState& state) {
 
 void publish_telemetry() {
     const auto audio = cardbridge::device_audio_status();
-    char telemetry_json[96]{};
+    char telemetry_json[224]{};
     std::snprintf(
         telemetry_json,
         sizeof(telemetry_json),
         "{\"v\":1,\"event\":\"telemetry\",\"bat\":%d,\"rssi\":%" PRId32
-        ",\"ext\":%s}",
+        ",\"ext\":%s,\"sent\":%" PRIu32 ",\"fail\":%" PRIu32
+        ",\"serr\":%" PRId32
+        ",\"mf\":%" PRIu32 ",\"rd\":%" PRIu32
+        ",\"rh\":%" PRIu32 ",\"cg\":%" PRIu32 ",\"tg\":%" PRIu32
+        ",\"wd\":%" PRIu32 ",\"wr\":%" PRId32 "}",
         g_battery_level.load(std::memory_order_acquire),
         audio.wifi_rssi,
         g_external_power_present.load(std::memory_order_acquire)
             ? "true"
-            : "false"
+            : "false",
+        audio.stream_frames_sent,
+        audio.stream_failures,
+        audio.last_stream_error,
+        audio.microphone_record_failures,
+        audio.capture_ring_drops,
+        audio.capture_ring_high_water,
+        audio.maximum_capture_gap_ms,
+        audio.maximum_transport_gap_ms,
+        audio.wifi_disconnect_count,
+        audio.last_wifi_disconnect_reason
     );
     (void)ble_bridge_notify_state(telemetry_json);
 }
@@ -885,7 +911,10 @@ extern "C" void app_main() {
     cardbridge::BridgeDomain domain;
     domain.reset(cardbridge::ResetProfile::kBootUnpaired);
     cardbridge::InputRouter input_router;
-    g_control_command_queue = xQueueCreate(40, sizeof(PendingControlCommand));
+    // BLE writes are paced and this queue is drained on every main-loop turn.
+    // Keeping forty full command unions reserved over 10 KiB of scarce
+    // internal RAM that the microphone/I2S path needs only while recording.
+    g_control_command_queue = xQueueCreate(8, sizeof(PendingControlCommand));
     if (g_control_command_queue == nullptr) {
         std::printf(
             "{\"v\":1,\"event\":\"error\","
@@ -1068,11 +1097,7 @@ extern "C" void app_main() {
                     (void)cardbridge::device_audio_apply_offer(
                         pending_control.offer
                     );
-                    std::fill(
-                        pending_control.offer.key.begin(),
-                        pending_control.offer.key.end(),
-                        0
-                    );
+                    publish_state(domain.state());
                     break;
                 case PendingControlKind::kAudioReady:
                     (void)cardbridge::device_audio_mark_receiver_ready(
@@ -1217,6 +1242,9 @@ extern "C" void app_main() {
                     break;
                 }
             }
+        }
+        if (g_audio_offer_state_dirty.exchange(false, std::memory_order_acq_rel)) {
+            publish_state(domain.state());
         }
 
         const auto audio_status = cardbridge::device_audio_status();
@@ -1484,6 +1512,14 @@ extern "C" void app_main() {
                     cardbridge::BridgeAction::kToggleMicIntent,
                     cardbridge::ActionSource::kBleControl
                 );
+                if (!wants_live) {
+                    cardbridge::device_audio_set_capture_enabled(false);
+                }
+                // Publish an exact baseline before capture starts and an exact
+                // final count after it stops. The audio HIL can then observe
+                // the production BLE/Wi-Fi path without opening USB Serial,
+                // which resets a physical Cardputer ADV.
+                publish_telemetry();
             }
             publish_state(domain.state());
         }
@@ -1669,14 +1705,19 @@ extern "C" void app_main() {
         }
 
         if (now >= next_telemetry_ms) {
-            emit_diagnostic_state(
-                domain.state(),
-                now,
-                last_heartbeat_ms,
-                ble_heartbeat_total,
-                serial_heartbeat_total,
-                "telemetry"
-            );
+            // Periodic JSON is a harness convenience, not a product data
+            // path. Avoid formatting and pushing a large serial record while
+            // live capture is sharing core 0 with the Wi-Fi/BLE stacks.
+            if (domain.state().capture_gate != cardbridge::CaptureGate::kOpen) {
+                emit_diagnostic_state(
+                    domain.state(),
+                    now,
+                    last_heartbeat_ms,
+                    ble_heartbeat_total,
+                    serial_heartbeat_total,
+                    "telemetry"
+                );
+            }
             next_telemetry_ms = now + 1000;
         }
 
@@ -1689,7 +1730,12 @@ extern "C" void app_main() {
                 external_power_present(),
                 std::memory_order_release
             );
-            publish_telemetry();
+            // BLE and Wi-Fi share the ESP32-S3 radio. Battery telemetry is not
+            // time critical, so never let its notification preempt live UDP
+            // audio. The stop transition publishes a fresh snapshot.
+            if (domain.state().capture_gate != cardbridge::CaptureGate::kOpen) {
+                publish_telemetry();
+            }
             next_battery_sample_ms = now + kBatterySampleIntervalMs;
         }
 

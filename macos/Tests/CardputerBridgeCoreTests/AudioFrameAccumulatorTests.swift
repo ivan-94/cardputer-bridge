@@ -7,21 +7,21 @@ final class AudioFrameAccumulatorTests: XCTestCase {
         let pcm = Array(repeating: Int16(1_000), count: 320)
             .withUnsafeBytes { Data($0) }
 
-        XCTAssertTrue(accumulator.accept(AudioFrameV1(
+        XCTAssertTrue(accumulator.accept(AudioFrameV2(
             flags: [],
             sessionID: 7,
             sequence: 10,
             captureSampleIndex: 0,
             pcm16: pcm
         )))
-        XCTAssertTrue(accumulator.accept(AudioFrameV1(
+        XCTAssertTrue(accumulator.accept(AudioFrameV2(
             flags: [],
             sessionID: 7,
             sequence: 12,
             captureSampleIndex: 640,
             pcm16: pcm
         )))
-        XCTAssertFalse(accumulator.accept(AudioFrameV1(
+        XCTAssertFalse(accumulator.accept(AudioFrameV2(
             flags: [],
             sessionID: 7,
             sequence: 12,

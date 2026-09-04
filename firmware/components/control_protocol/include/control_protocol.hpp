@@ -36,7 +36,6 @@ struct AudioOffer {
     std::array<char, 16> ipv4{};
     std::uint16_t port = 0;
     std::uint64_t session_id = 0;
-    std::array<std::uint8_t, 32> key{};
 };
 
 struct ConfigPrepare {

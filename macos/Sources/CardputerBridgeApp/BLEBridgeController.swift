@@ -40,6 +40,9 @@ final class BLEBridgeController: NSObject, ObservableObject {
     private var commandWriteTotal = 0
     private var commandWriteAcknowledgedTotal = 0
     private var commandWriteFailureTotal = 0
+    private var lastCommandType = "none"
+    private var lastCommandBytes = 0
+    private var commandMaximumWriteBytes = 0
     private var audioOfferAttemptTotal = 0
     private var microphoneIntentAuthority = MicrophoneIntentAuthority()
     private let runtimeProbeURL: URL?
@@ -294,6 +297,7 @@ final class BLEBridgeController: NSObject, ObservableObject {
             160,
             selectedPeripheral.maximumWriteValueLength(for: .withResponse)
         )
+        commandMaximumWriteBytes = maximum
         guard writes.allSatisfy({ !$0.isEmpty && $0.count <= maximum }) else {
             commandFault = "control_message_too_large"
             return
@@ -313,8 +317,16 @@ final class BLEBridgeController: NSObject, ObservableObject {
               let commandCharacteristic else { return }
         commandWriteInFlight = true
         commandWriteTotal += 1
+        let payload = commandWriteQueue.removeFirst()
+        lastCommandBytes = payload.count
+        if let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+           let type = object["type"] as? String {
+            lastCommandType = type
+        } else {
+            lastCommandType = "unknown"
+        }
         selectedPeripheral.writeValue(
-            commandWriteQueue.removeFirst(),
+            payload,
             for: commandCharacteristic,
             type: .withResponse
         )
@@ -342,6 +354,11 @@ final class BLEBridgeController: NSObject, ObservableObject {
 
     private func sendHeartbeatIfDue(force: Bool = false) {
         guard state.canSendCommand else { return }
+        // A cached state notification can arrive just before the command
+        // characteristic becomes writable. Re-check the Debug-only HIL
+        // intent from the heartbeat loop so automated capture does not depend
+        // on that CoreBluetooth callback ordering.
+        startHarnessMicrophoneIfReady()
         guard let selectedPeripheral, let heartbeatCharacteristic else { return }
         let now = Date()
         if let lastHeartbeatSentAt,
@@ -361,8 +378,12 @@ final class BLEBridgeController: NSObject, ObservableObject {
             commandWriteInFlight: commandWriteInFlight,
             commandQueueDepth: commandWriteQueue.count
         ) else { return }
+        // BLE and Wi-Fi share the ESP32-S3 2.4 GHz radio. During capture, one
+        // acknowledged heartbeat every three seconds is enough for the six-second
+        // fail-closed lease and leaves AP beacons plus UDP audio first claim on
+        // the radio. Muted mode stays responsive at one heartbeat per second.
         let interval = micIntent == "live" ||
-            microphoneIntentAuthority.desired == .live ? 0.1 : 1.0
+            microphoneIntentAuthority.desired == .live ? 3.0 : 1.0
         if !force,
            let lastHeartbeatSentAt,
            now.timeIntervalSince(lastHeartbeatSentAt) < interval {
@@ -624,6 +645,9 @@ final class BLEBridgeController: NSObject, ObservableObject {
             "command_write_total": commandWriteTotal,
             "command_write_acknowledged_total": commandWriteAcknowledgedTotal,
             "command_write_failure_total": commandWriteFailureTotal,
+            "last_command_type": lastCommandType,
+            "last_command_bytes": lastCommandBytes,
+            "command_maximum_write_bytes": commandMaximumWriteBytes,
             "shortcut_learn_harness_enabled": startShortcutLearningForHarness,
             "shortcut_learn_harness_token": harnessShortcutLearnToken.map(String.init) ?? NSNull(),
             "shortcut_learn_event": learnEvent,
@@ -631,6 +655,17 @@ final class BLEBridgeController: NSObject, ObservableObject {
             "battery_percent": deviceTelemetry?.batteryPercent ?? NSNull(),
             "wifi_rssi": deviceTelemetry?.wifiRSSI ?? NSNull(),
             "external_power": deviceTelemetry?.externalPower ?? NSNull(),
+            "stream_frames_sent": deviceTelemetry?.streamFramesSent ?? NSNull(),
+            "stream_failures": deviceTelemetry?.streamFailures ?? NSNull(),
+            "last_stream_error": deviceTelemetry?.lastStreamError ?? NSNull(),
+            "capture_overruns": deviceTelemetry?.captureOverruns ?? NSNull(),
+            "microphone_record_failures": deviceTelemetry?.microphoneRecordFailures ?? NSNull(),
+            "capture_ring_drops": deviceTelemetry?.captureRingDrops ?? NSNull(),
+            "capture_ring_high_water": deviceTelemetry?.captureRingHighWater ?? NSNull(),
+            "maximum_capture_gap_ms": deviceTelemetry?.maximumCaptureGapMilliseconds ?? NSNull(),
+            "maximum_transport_gap_ms": deviceTelemetry?.maximumTransportGapMilliseconds ?? NSNull(),
+            "wifi_disconnect_count": deviceTelemetry?.wifiDisconnectCount ?? NSNull(),
+            "last_wifi_disconnect_reason": deviceTelemetry?.lastWiFiDisconnectReason ?? NSNull(),
             "firmware_version": firmwareIdentity?.firmwareVersion ?? NSNull(),
             "firmware_layout": firmwareIdentity?.layoutVersion ?? NSNull(),
             "firmware_ota_capable": firmwareIdentity?.otaCapable ?? NSNull(),

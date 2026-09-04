@@ -11,6 +11,9 @@ log_path="${CARDPUTER_BRIDGE_MACOS_LOG_PATH:-$runtime_root/macos-app.log}"
 config_path="${CARDPUTER_BRIDGE_CONFIG_PATH:-}"
 start_mic_live="${CARDPUTER_BRIDGE_START_MIC_LIVE:-}"
 start_shortcut_learning="${CARDPUTER_BRIDGE_START_SHORTCUT_LEARNING:-}"
+local_ota_path="${CARDPUTER_BRIDGE_LOCAL_OTA_PATH:-}"
+local_ota_version="${CARDPUTER_BRIDGE_LOCAL_OTA_VERSION:-}"
+local_ota_probe_path="${CARDPUTER_BRIDGE_LOCAL_OTA_PROBE_PATH:-$runtime_root/local-ota-state.json}"
 
 mkdir -p "$runtime_root"
 
@@ -21,7 +24,7 @@ fi
 
 product_pids() {
   {
-    # Installed, version-suffixed and DerivedData copies share BLE, TCP and HAL
+    # Installed, version-suffixed and DerivedData copies share BLE, UDP and HAL
     # resources. Stop every Cardputer Bridge app before selecting one build.
     pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge' || true
     pgrep -f -x '.*/Cardputer Bridge[^/]*\.app/Contents/MacOS/Cardputer Bridge .*' || true
@@ -72,6 +75,17 @@ if [[ "$start_mic_live" == "1" ]]; then
 fi
 if [[ "$start_shortcut_learning" == "1" ]]; then
   open_args+=(--env "CARDPUTER_BRIDGE_START_SHORTCUT_LEARNING=1")
+fi
+if [[ -n "$local_ota_path" || -n "$local_ota_version" ]]; then
+  if [[ -z "$local_ota_path" || -z "$local_ota_version" ]]; then
+    printf 'FAIL LOCAL_OTA_REQUIRES_PATH_AND_VERSION\n' >&2
+    exit 2
+  fi
+  open_args+=(
+    --env "CARDPUTER_BRIDGE_LOCAL_OTA_PATH=$local_ota_path"
+    --env "CARDPUTER_BRIDGE_LOCAL_OTA_VERSION=$local_ota_version"
+    --env "CARDPUTER_BRIDGE_LOCAL_OTA_PROBE_PATH=$local_ota_probe_path"
+  )
 fi
 open "${open_args[@]}" \
   -o "$log_path" \

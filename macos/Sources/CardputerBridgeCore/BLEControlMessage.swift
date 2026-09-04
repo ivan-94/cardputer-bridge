@@ -160,19 +160,52 @@ public struct DeviceTelemetry: Codable, Equatable, Sendable {
     public let batteryPercent: Int
     public let wifiRSSI: Int
     public let externalPower: Bool
+    public let streamFramesSent: UInt32
+    public let streamFailures: UInt32
+    public let lastStreamError: Int
+    public let captureOverruns: UInt32
+    public let microphoneRecordFailures: UInt32
+    public let captureRingDrops: UInt32
+    public let captureRingHighWater: UInt32
+    public let maximumCaptureGapMilliseconds: UInt32
+    public let maximumTransportGapMilliseconds: UInt32
+    public let wifiDisconnectCount: UInt32
+    public let lastWiFiDisconnectReason: Int
 
     public init(
         v: Int = 1,
         event: String = "telemetry",
         batteryPercent: Int,
         wifiRSSI: Int,
-        externalPower: Bool = false
+        externalPower: Bool = false,
+        streamFramesSent: UInt32 = 0,
+        streamFailures: UInt32 = 0,
+        lastStreamError: Int = 0,
+        captureOverruns: UInt32 = 0,
+        microphoneRecordFailures: UInt32 = 0,
+        captureRingDrops: UInt32 = 0,
+        captureRingHighWater: UInt32 = 0,
+        maximumCaptureGapMilliseconds: UInt32 = 0,
+        maximumTransportGapMilliseconds: UInt32 = 0,
+        wifiDisconnectCount: UInt32 = 0,
+        lastWiFiDisconnectReason: Int = 0
     ) {
         self.v = v
         self.event = event
         self.batteryPercent = batteryPercent
         self.wifiRSSI = wifiRSSI
         self.externalPower = externalPower
+        self.streamFramesSent = streamFramesSent
+        self.streamFailures = streamFailures
+        self.lastStreamError = lastStreamError
+        self.captureOverruns = captureOverruns
+        self.microphoneRecordFailures = microphoneRecordFailures
+        self.captureRingDrops = captureRingDrops
+        self.captureRingHighWater = captureRingHighWater
+        self.maximumCaptureGapMilliseconds = maximumCaptureGapMilliseconds
+        self.maximumTransportGapMilliseconds = maximumTransportGapMilliseconds
+        self.wifiDisconnectCount = wifiDisconnectCount
+        self.lastWiFiDisconnectReason = lastWiFiDisconnectReason
     }
 
     public init(from decoder: Decoder) throws {
@@ -185,6 +218,50 @@ public struct DeviceTelemetry: Codable, Equatable, Sendable {
             Bool.self,
             forKey: .externalPower
         ) ?? false
+        streamFramesSent = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .streamFramesSent
+        ) ?? 0
+        streamFailures = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .streamFailures
+        ) ?? 0
+        lastStreamError = try container.decodeIfPresent(
+            Int.self,
+            forKey: .lastStreamError
+        ) ?? 0
+        microphoneRecordFailures = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .microphoneRecordFailures
+        ) ?? 0
+        captureRingDrops = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .captureRingDrops
+        ) ?? 0
+        captureRingHighWater = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .captureRingHighWater
+        ) ?? 0
+        maximumCaptureGapMilliseconds = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .maximumCaptureGapMilliseconds
+        ) ?? 0
+        maximumTransportGapMilliseconds = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .maximumTransportGapMilliseconds
+        ) ?? 0
+        captureOverruns = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .captureOverruns
+        ) ?? (microphoneRecordFailures &+ captureRingDrops)
+        wifiDisconnectCount = try container.decodeIfPresent(
+            UInt32.self,
+            forKey: .wifiDisconnectCount
+        ) ?? 0
+        lastWiFiDisconnectReason = try container.decodeIfPresent(
+            Int.self,
+            forKey: .lastWiFiDisconnectReason
+        ) ?? 0
     }
 
     public static func decode(from data: Data) -> Self? {
@@ -202,5 +279,16 @@ public struct DeviceTelemetry: Codable, Equatable, Sendable {
         case batteryPercent = "bat"
         case wifiRSSI = "rssi"
         case externalPower = "ext"
+        case streamFramesSent = "sent"
+        case streamFailures = "fail"
+        case lastStreamError = "serr"
+        case captureOverruns = "overrun"
+        case microphoneRecordFailures = "mf"
+        case captureRingDrops = "rd"
+        case captureRingHighWater = "rh"
+        case maximumCaptureGapMilliseconds = "cg"
+        case maximumTransportGapMilliseconds = "tg"
+        case wifiDisconnectCount = "wd"
+        case lastWiFiDisconnectReason = "wr"
     }
 }

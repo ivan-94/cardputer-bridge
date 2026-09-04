@@ -10,13 +10,19 @@ constexpr const char* kSharedMemoryName = "/cardputer_bridge_audio_v3";
 constexpr UInt32 kSharedMemoryMagic = 0x43424131;
 constexpr UInt32 kSharedMemoryVersion = 3;
 constexpr UInt32 kSharedMemoryCapacityFrames = 65536;
-// Capacity protects against scheduling stalls; it must never become an audio
-// delay line. A live input may retain at most 100 ms and catches up to the
-// newest 20 ms when that bound is crossed.
-constexpr UInt32 kMaximumRealtimeBacklogFrames = 4800;
-constexpr UInt32 kRealtimeCatchupFrames = 960;
+// Capacity protects against scheduling stalls; it must never become an
+// unbounded delay line. A synchronized packet capture on the real LAN showed
+// a 1.143-second ingress pause followed by complete delivery even though the
+// Cardputer kept sending every 20-33 ms. Preserve 1.28 seconds so recording
+// favors content integrity over conversational latency. Shed only above the
+// 1.32-second bound, which remains below the 1.365-second ring capacity.
+constexpr UInt32 kMaximumRealtimeBacklogFrames = 63360;
+constexpr UInt32 kRealtimeCatchupFrames = 61440;
 constexpr UInt32 kTestPulseFrames = 4800;
-constexpr UInt32 kProducerLeaseMilliseconds = 200;
+// The lease only protects against a crashed producer. It must outlive the
+// 1.28-second playout reservoir, or a temporary network ingress pause causes
+// the consumer to discard valid buffered speech before it can be rendered.
+constexpr UInt32 kProducerLeaseMilliseconds = 1500;
 
 struct alignas(64) SharedAudioBuffer {
     UInt32 magic;

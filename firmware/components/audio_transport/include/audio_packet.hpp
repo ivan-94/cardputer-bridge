@@ -6,12 +6,17 @@
 namespace cardbridge {
 
 constexpr std::size_t kAudioHeaderBytes = 28;
-constexpr std::size_t kAudioFrameSamples = 160;
-constexpr std::size_t kAudioPayloadBytes = 320;
-constexpr std::size_t kAudioAuthTagBytes = 16;
-constexpr std::size_t kAudioNonceBytes = 12;
+constexpr std::size_t kAudioFrameSamples = 320;
+constexpr std::size_t kAudioPayloadBytes = 640;
 constexpr std::size_t kAudioStreamFrameBytes =
-    kAudioHeaderBytes + kAudioPayloadBytes + kAudioAuthTagBytes;
+    kAudioHeaderBytes + kAudioPayloadBytes;
+constexpr std::size_t kAudioRedundantDatagramBytes =
+    kAudioStreamFrameBytes * 2;
+constexpr std::uint32_t kAudioRedundancyLagFrames = 5;
+static_assert(
+    kAudioRedundantDatagramBytes <= 1472,
+    "redundant audio datagram must fit an IPv4 MTU without fragmentation"
+);
 
 enum AudioPacketFlag : std::uint8_t {
     kAudioFlagMuted = 1U << 0,
@@ -37,6 +42,18 @@ struct AudioPacketHeader {
     }
 };
 
+constexpr bool audio_frames_match_redundancy_lag(
+    std::uint32_t redundant_sequence,
+    std::uint32_t redundant_capture_sample_index,
+    std::uint32_t current_sequence,
+    std::uint32_t current_capture_sample_index
+) {
+    return redundant_sequence + kAudioRedundancyLagFrames == current_sequence &&
+        redundant_capture_sample_index +
+            kAudioFrameSamples * kAudioRedundancyLagFrames ==
+            current_capture_sample_index;
+}
+
 bool encode_audio_header(
     const AudioPacketHeader& header,
     std::uint8_t* output,
@@ -49,10 +66,12 @@ bool decode_audio_header(
     AudioPacketHeader& header
 );
 
-void make_audio_nonce(
-    std::uint64_t session_id,
-    std::uint32_t sequence,
-    std::uint8_t output[kAudioNonceBytes]
+// Header uses network byte order; PCM is always signed little-endian.
+bool encode_audio_packet(
+    const AudioPacketHeader& header,
+    const std::int16_t* samples,
+    std::uint8_t* output,
+    std::size_t output_size
 );
 
 }  // namespace cardbridge

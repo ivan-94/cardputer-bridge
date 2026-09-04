@@ -313,12 +313,13 @@ OSStatus Initialize(AudioServerPlugInDriverRef, AudioServerPlugInHostRef inHost)
     if (IsIsolatedTestMode() && brokerSocketPath == nullptr) {
         return noErr;
     }
-    const std::optional<uid_t> allowedProducerUID = IsIsolatedTestMode()
-        ? std::optional<uid_t>(geteuid())
-        : cardputer_bridge::audio_ipc::ConsoleUserUID();
-    if (brokerSocketPath == nullptr
-        || !allowedProducerUID.has_value()
-        || !gFDBroker.Start(brokerSocketPath, *allowedProducerUID)) {
+    if (brokerSocketPath == nullptr) {
+        return kAudioHardwareUnspecifiedError;
+    }
+    const bool started = IsIsolatedTestMode()
+        ? gFDBroker.Start(brokerSocketPath, geteuid())
+        : gFDBroker.Start(brokerSocketPath, cardputer_bridge::audio_ipc::ConsoleUserUID);
+    if (!started) {
         return kAudioHardwareUnspecifiedError;
     }
     return noErr;

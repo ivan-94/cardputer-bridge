@@ -22,7 +22,15 @@ struct DeviceAudioStatus {
     std::array<char, 33> wifi_ssid{};
     std::uint32_t stream_frames_sent = 0;
     std::uint32_t stream_failures = 0;
+    std::int32_t last_stream_error = 0;
     std::uint32_t capture_overruns = 0;
+    std::uint32_t microphone_record_failures = 0;
+    std::uint32_t capture_ring_drops = 0;
+    std::uint32_t capture_ring_high_water = 0;
+    std::uint32_t maximum_capture_gap_ms = 0;
+    std::uint32_t maximum_transport_gap_ms = 0;
+    std::uint32_t wifi_disconnect_count = 0;
+    std::int32_t last_wifi_disconnect_reason = 0;
     std::uint32_t idle_wait_total = 0;
     std::uint32_t notification_wake_total = 0;
     std::uint32_t wifi_telemetry_refresh_total = 0;

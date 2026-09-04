@@ -18,13 +18,13 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
       --audio-probe "$probe" \
       --capture-seconds "${CARDPUTER_PHASE3_CAPTURE_SECONDS:-60}"
     "$project_dir/scripts/verify_macos_restart_mute_hil.py"
-    printf 'PASS phase3_authenticated_tcp_stream_to_app_and_mute\n'
+    printf 'PASS phase3_plaintext_udp_stream_to_app_and_mute\n'
     exit 0
   fi
   sleep 1
 done
 
-printf 'BLOCKED phase3_no_authenticated_audio probe=%s\n' "$probe" >&2
+printf 'BLOCKED phase3_no_session_audio probe=%s\n' "$probe" >&2
 if [ -f "$probe" ]; then
   PYTHONPATH="$project_dir" python3 -m harness.verifier.audio_runtime_probe --ready "$probe" || true
 fi

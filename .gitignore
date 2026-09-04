@@ -8,6 +8,7 @@
 /firmware/keys/
 /macos/*.xcodeproj/
 /macos/.build/
+/.build/
 /.release/
 __pycache__/
 *.pyc

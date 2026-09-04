@@ -5,8 +5,8 @@
 namespace cardbridge {
 namespace {
 
-constexpr std::uint8_t kMagic[] = {'C', 'B', 'S', '1'};
-constexpr std::uint8_t kVersion = 1;
+constexpr std::uint8_t kMagic[] = {'C', 'B', 'P', '2'};
+constexpr std::uint8_t kVersion = 2;
 
 void write_u16(std::uint8_t* output, std::uint16_t value) {
     output[0] = static_cast<std::uint8_t>(value >> 8);
@@ -46,7 +46,7 @@ std::uint64_t read_u64(const std::uint8_t* input) {
     return value;
 }
 
-bool valid_v1_shape(const AudioPacketHeader& header) {
+bool valid_frame_shape(const AudioPacketHeader& header) {
     return header.frame_samples == kAudioFrameSamples &&
         header.payload_length == kAudioPayloadBytes;
 }
@@ -59,7 +59,7 @@ bool encode_audio_header(
     std::size_t output_size
 ) {
     if (output == nullptr || output_size < kAudioHeaderBytes ||
-        !valid_v1_shape(header)) {
+        !valid_frame_shape(header)) {
         return false;
     }
     std::copy(kMagic, kMagic + sizeof(kMagic), output);
@@ -92,20 +92,27 @@ bool decode_audio_header(
         read_u16(input + 24),
         read_u16(input + 26),
     };
-    if (!valid_v1_shape(candidate)) {
+    if (!valid_frame_shape(candidate)) {
         return false;
     }
     header = candidate;
     return true;
 }
 
-void make_audio_nonce(
-    std::uint64_t session_id,
-    std::uint32_t sequence,
-    std::uint8_t output[kAudioNonceBytes]
+bool encode_audio_packet(
+    const AudioPacketHeader& header,
+    const std::int16_t* samples,
+    std::uint8_t* output,
+    std::size_t output_size
 ) {
-    write_u64(output, session_id);
-    write_u32(output + 8, sequence);
+    if (samples == nullptr || output_size != kAudioStreamFrameBytes ||
+        !encode_audio_header(header, output, output_size)) return false;
+    for (std::size_t index = 0; index < kAudioFrameSamples; ++index) {
+        const auto sample = static_cast<std::uint16_t>(samples[index]);
+        output[kAudioHeaderBytes + index * 2] = static_cast<std::uint8_t>(sample);
+        output[kAudioHeaderBytes + index * 2 + 1] = static_cast<std::uint8_t>(sample >> 8);
+    }
+    return true;
 }
 
 }  // namespace cardbridge
