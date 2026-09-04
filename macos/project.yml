@@ -9,8 +9,8 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     CODE_SIGNING_ALLOWED: NO
-    CURRENT_PROJECT_VERSION: 18
-    MARKETING_VERSION: 0.10.8
+    CURRENT_PROJECT_VERSION: 19
+    MARKETING_VERSION: 0.10.9
 targets:
   CardputerBridgeCore:
     type: framework
@@ -37,6 +37,7 @@ targets:
         buildPhase: resources
     dependencies:
       - target: CardputerBridgeCore
+      - sdk: CoreAudio.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.nexu.cardputerbridge.app
